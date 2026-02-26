@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    __directory_lib::run()
+    sound_batcher_lib::run()
 }
