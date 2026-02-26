@@ -35,6 +35,19 @@ export function FileBrowser() {
 
   if (isLoading && files.length === 0) return <div className="p-4">{t('fileBrowser.loading')}</div>;
   if (error) return <div className="p-4 text-red-500">{t('fileBrowser.error', { message: error })}</div>;
+  if (!currentPath && files.length === 0) {
+    return (
+      <div className="p-4 text-sm text-gray-400 space-y-3">
+        <div>フォルダを読み込めませんでした。</div>
+        <button
+          onClick={() => void init()}
+          className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700"
+        >
+          再読み込み
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full overflow-y-auto p-2 flex flex-col">
@@ -69,9 +82,10 @@ export function FileBrowser() {
       <div className="flex items-center justify-between mb-2 gap-2">
         <div className="text-xs text-gray-500 truncate flex-1" title={currentPath}>{currentPath}</div>
         <button 
-          onClick={() => togglePin(currentPath)}
+          onClick={() => currentPath && togglePin(currentPath)}
           className="p-1 hover:bg-gray-800 rounded"
           title={isCurrentPinned ? t('fileBrowser.unpinCurrentFolder') : t('fileBrowser.pinCurrentFolder')}
+          disabled={!currentPath}
         >
           {isCurrentPinned ? (
             <Pin className="w-4 h-4 text-yellow-500 fill-current" />

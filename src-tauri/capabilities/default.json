@@ -6,13 +6,25 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "fs:default",
+    "store:default",
     {
       "identifier": "fs:allow-read",
       "allow": [{ "path": "**" }]
     },
     {
+      "identifier": "fs:allow-read-dir",
+      "allow": [{ "path": "**" }]
+    },
+    {
       "identifier": "fs:allow-stat",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
       "allow": [{ "path": "**" }]
     },
     {

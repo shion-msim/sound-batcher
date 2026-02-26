@@ -72,11 +72,35 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
       if (pinned) {
         set({ pinnedPaths: pinned });
       }
+      const tryLoad = async (path: string) => {
+        await get().loadFiles(path);
+        return get().currentPath === path;
+      };
 
-      const home = await homeDir();
-      await get().loadFiles(home);
+      // Prefer home directory, then fallback to common roots.
+      try {
+        const home = await homeDir();
+        if (await tryLoad(home)) return;
+      } catch (error) {
+        console.warn('Failed to resolve homeDir', error);
+      }
+
+      const fallbackPaths = navigator.userAgent.includes('Windows')
+        ? ['C:\\Users', 'C:\\']
+        : ['/'];
+
+      for (const path of fallbackPaths) {
+        if (await tryLoad(path)) return;
+      }
+
+      set({
+        error:
+          get().error ??
+          '初期フォルダの読み込みに失敗しました。再読み込みをお試しください。',
+      });
     } catch (error) {
-       console.error('Failed to init file browser', error);
+      console.error('Failed to init file browser', error);
+      set({ error: error instanceof Error ? error.message : String(error) });
     }
   },
   togglePin: async (path) => {

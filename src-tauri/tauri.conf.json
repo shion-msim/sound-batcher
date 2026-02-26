@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "--directory",
+        "title": "SoundBatcher",
         "width": 800,
         "height": 600
       }
