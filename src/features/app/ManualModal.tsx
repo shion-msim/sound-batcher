@@ -3,8 +3,7 @@ import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { resolveResource } from '@tauri-apps/api/path';
-import { readTextFile } from '@tauri-apps/plugin-fs';
+import { BaseDirectory, readTextFile } from '@tauri-apps/plugin-fs';
 
 interface ManualModalProps {
   open: boolean;
@@ -48,8 +47,9 @@ export function ManualModal({ open, onClose }: ManualModalProps) {
 
         for (const resourcePath of USER_MANUAL_RESOURCE_PATH_CANDIDATES) {
           try {
-            const manualPath = await resolveResource(resourcePath);
-            const manualContent = await readTextFile(manualPath);
+            const manualContent = await readTextFile(resourcePath, {
+              baseDir: BaseDirectory.Resource,
+            });
             setContent(manualContent);
             loaded = true;
             break;
