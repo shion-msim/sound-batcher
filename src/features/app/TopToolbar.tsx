@@ -11,7 +11,7 @@ export function TopToolbar({ onOpenManual, onOpenSettings }: TopToolbarProps) {
 
   return (
     <div className="flex h-full items-center justify-between px-3">
-      <div className="text-sm font-semibold tracking-wide text-gray-200">Sound Batcher</div>
+      <div className="text-sm font-semibold tracking-wide text-gray-200">Audio Desk</div>
 
       <div className="inline-flex items-center gap-2">
         <button

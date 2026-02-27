@@ -1,4 +1,4 @@
-# PRD: SoundBatcher - 要件と将来構想
+# PRD: Audio Desk - 要件と将来構想
 
 ## 1. 目的
 

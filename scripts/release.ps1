@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $projectRoot
 
-Write-Host "==> SoundBatcher release build start"
+Write-Host "==> Audio Desk release build start"
 
 if (-not $SkipInstall) {
   Write-Host "==> npm install"

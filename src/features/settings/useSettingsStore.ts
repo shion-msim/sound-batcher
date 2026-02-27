@@ -65,7 +65,7 @@ export const useSettingsStore = create<SettingsState>()(
         }),
     }),
     {
-      name: 'sound-batcher-settings',
+      name: 'audio-desk-settings',
     }
   )
 );

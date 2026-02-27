@@ -1,6 +1,6 @@
-# SoundBatcher
+# Audio Desk
 
-SoundBatcherは、Tauri + React + FFmpegで構築した音声プレビュー/バッチ処理アプリです。
+Audio Deskは、Tauri + React + FFmpegで構築した音声プレビュー/バッチ処理アプリです。
 大量の音声ファイルを素早く確認し、まとめて処理するワークフローを想定しています。
 
 ## 現在の実装範囲
