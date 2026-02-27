@@ -28,7 +28,7 @@ export function FileBrowser() {
   const {
     tabs, activeTabId,
     files, currentPath, isLoading, error,
-    init, loadFiles, goUp, navigateTo, goForward, history, futureHistory,
+    init, loadFiles, goUp, navigateTo, goForward, futureHistory,
     pinnedPaths, togglePin,
     selectedFiles, toggleSelection, setSelection,
     columnPathChain, directoryChildrenByPath, setColumnPathChain, loadDirectoryEntries,
@@ -698,7 +698,7 @@ export function FileBrowser() {
       if (file.isDirectory) {
         const baseChain = normalizedColumnChain.slice(0, columnIndex + 1);
         const nextChain = [...baseChain, file.path];
-        void loadDirectoryEntries(file.path).catch(() => {});
+        void loadDirectoryEntries(file.path).catch(() => { });
         setColumnPathChain(nextChain);
       }
       return;
@@ -710,7 +710,7 @@ export function FileBrowser() {
     const baseChain = normalizedColumnChain.slice(0, columnIndex + 1);
     if (file.isDirectory) {
       const nextChain = [...baseChain, file.path];
-      void loadDirectoryEntries(file.path).catch(() => {});
+      void loadDirectoryEntries(file.path).catch(() => { });
       setColumnPathChain(nextChain);
       return;
     }
@@ -849,13 +849,11 @@ export function FileBrowser() {
                 key={tab.id}
                 type="button"
                 draggable
-                className={`group inline-flex max-w-[200px] items-center gap-1 rounded px-2 py-1 text-xs transition-colors ${
-                  isActive
+                className={`group inline-flex max-w-[200px] items-center gap-1 rounded px-2 py-1 text-xs transition-colors ${isActive
                     ? 'bg-gray-900 text-gray-100'
                     : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
-                } ${draggingTabId === tab.id ? 'opacity-60' : ''} ${
-                  tabDropTargetId === tab.id ? 'ring-1 ring-blue-500' : ''
-                }`}
+                  } ${draggingTabId === tab.id ? 'opacity-60' : ''} ${tabDropTargetId === tab.id ? 'ring-1 ring-blue-500' : ''
+                  }`}
                 onDragStart={(event) => {
                   setDraggingTabId(tab.id);
                   event.dataTransfer.effectAllowed = 'move';
