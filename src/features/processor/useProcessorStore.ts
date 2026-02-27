@@ -19,6 +19,10 @@ interface ProcessorState {
   isProcessing: boolean;
   addToQueue: (files: string[]) => void;
   removeFromQueue: (id: string) => void;
+  moveTaskToFront: (id: string) => void;
+  retryTask: (id: string) => void;
+  removeTasksByStatus: (statuses: ProcessTask['status'][]) => void;
+  dedupeQueue: () => void;
   startProcessing: () => Promise<void>;
   clearQueue: () => void;
 }
@@ -32,6 +36,45 @@ export const useProcessorStore = create<ProcessorState>((set, get) => ({
     })),
   removeFromQueue: (id) =>
     set((state) => ({ queue: state.queue.filter((task) => task.id !== id) })),
+  moveTaskToFront: (id) =>
+    set((state) => {
+      const index = state.queue.findIndex((task) => task.id === id);
+      if (index <= 0) return state;
+      const next = [...state.queue];
+      const [item] = next.splice(index, 1);
+      next.unshift(item);
+      return { queue: next };
+    }),
+  retryTask: (id) =>
+    set((state) => ({
+      queue: state.queue.map((task) =>
+        task.id === id
+          ? {
+              ...task,
+              status: 'pending',
+              error: undefined,
+              progress: undefined,
+              outputPath: undefined,
+            }
+          : task,
+      ),
+    })),
+  removeTasksByStatus: (statuses) =>
+    set((state) => ({
+      queue: state.queue.filter((task) => !statuses.includes(task.status)),
+    })),
+  dedupeQueue: () =>
+    set((state) => {
+      const seen = new Set<string>();
+      const next: ProcessTask[] = [];
+      for (const task of state.queue) {
+        const key = task.file.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push(task);
+      }
+      return { queue: next };
+    }),
   clearQueue: () => set({ queue: [] }),
   startProcessing: async () => {
     if (get().isProcessing) return;

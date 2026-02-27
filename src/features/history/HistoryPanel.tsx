@@ -3,10 +3,20 @@ import { useHistoryStore } from './useHistoryStore';
 import { ChevronDown, ChevronRight, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useFileBrowserStore } from '../file-browser/useFileBrowserStore';
+import { useProcessorStore } from '../processor/useProcessorStore';
+import { ContextMenu } from '../context-menu/ContextMenu';
+import { useContextMenu } from '../context-menu/useContextMenu';
+import type { ContextMenuCommandId, ContextMenuItem } from '../context-menu/context-menu.types';
+
+type HistoryContextTarget =
+  | { kind: 'historyJob'; jobId: string }
+  | { kind: 'historyResult'; jobId: string; resultIndex: number }
+  | { kind: 'historyBlank' };
 
 export function HistoryPanel() {
-  const { jobs, loadHistory, isLoading } = useHistoryStore();
+  const { jobs, loadHistory, isLoading, clearHistory, removeJobsByStatus } = useHistoryStore();
   const { navigateTo, setSelection } = useFileBrowserStore();
+  const { addToQueue } = useProcessorStore();
   const [expandedJobs, setExpandedJobs] = useState<string[]>([]);
   const [copiedErrorKey, setCopiedErrorKey] = useState<string | null>(null);
   const { t } = useTranslation();
@@ -58,10 +68,103 @@ export function HistoryPanel() {
     }
   };
 
+  const buildMenuItems = (target: HistoryContextTarget | null): ContextMenuItem[] => {
+    if (!target) return [];
+    if (target.kind === 'historyBlank') {
+      return [
+        { id: 'history.reload', label: '再読み込み' },
+        {
+          id: 'history.clearSuccessful',
+          label: '成功ジョブを削除',
+          enabled: jobs.some((job) => job.status === 'completed'),
+        },
+        {
+          id: 'history.clearAll',
+          label: '履歴を全削除',
+          danger: true,
+          separatorBefore: true,
+          enabled: jobs.length > 0,
+        },
+      ];
+    }
+
+    if (target.kind === 'historyJob') {
+      const job = jobs.find((item) => item.id === target.jobId);
+      if (!job) return [];
+      const isExpanded = expandedJobs.includes(job.id);
+      return [
+        { id: 'history.expandToggle', label: isExpanded ? '折りたたむ' : '展開する' },
+        { id: 'history.requeueJob', label: 'このジョブを再キュー', enabled: job.inputFiles.length > 0 },
+        { id: 'history.copyJobSummary', label: 'ジョブ情報をコピー', separatorBefore: true },
+      ];
+    }
+
+    const job = jobs.find((item) => item.id === target.jobId);
+    const result = job?.results[target.resultIndex];
+    if (!job || !result) return [];
+    return [
+      { id: 'history.openOutputFolder', label: '出力フォルダを開く', enabled: Boolean(result.outputPath) },
+      { id: 'history.openOutputFileInBrowser', label: '出力ファイルを選択', enabled: Boolean(result.outputPath) },
+      { id: 'history.copyError', label: 'エラーコードをコピー', enabled: Boolean(result.error), separatorBefore: true },
+      { id: 'history.copyPath', label: 'パスをコピー' },
+    ];
+  };
+
+  const { menuState, menuItems, openMenu, closeMenu } = useContextMenu<HistoryContextTarget>({
+    itemsBuilder: buildMenuItems,
+  });
+
+  const handleContextCommand = async (commandId: ContextMenuCommandId) => {
+    const target = menuState.target;
+    if (!target) return;
+
+    if (target.kind === 'historyBlank') {
+      if (commandId === 'history.reload') await loadHistory();
+      if (commandId === 'history.clearSuccessful') await removeJobsByStatus(['completed']);
+      if (commandId === 'history.clearAll') await clearHistory();
+      return;
+    }
+
+    if (target.kind === 'historyJob') {
+      const job = jobs.find((item) => item.id === target.jobId);
+      if (!job) return;
+      if (commandId === 'history.expandToggle') toggleExpand(job.id);
+      if (commandId === 'history.requeueJob') addToQueue(job.inputFiles);
+      if (commandId === 'history.copyJobSummary') {
+        const summary = `${new Date(job.timestamp).toLocaleString()} / ${job.status} / ${job.inputFiles.length} files`;
+        await navigator.clipboard.writeText(summary);
+      }
+      return;
+    }
+
+    const job = jobs.find((item) => item.id === target.jobId);
+    const result = job?.results[target.resultIndex];
+    if (!result) return;
+    if (commandId === 'history.openOutputFolder') {
+      const outputFolder = result.outputPath ? getParentDirectory(result.outputPath) : null;
+      if (outputFolder) await handleOpenFolderInFileBrowser(outputFolder);
+    }
+    if (commandId === 'history.openOutputFileInBrowser' && result.outputPath) {
+      await handleOpenFileInFileBrowser(result.outputPath);
+    }
+    if (commandId === 'history.copyError' && result.error) {
+      await handleCopyErrorCode(result.error, `${target.jobId}-${target.resultIndex}`);
+    }
+    if (commandId === 'history.copyPath') {
+      const toCopy = result.outputPath ?? result.file;
+      await navigator.clipboard.writeText(toCopy);
+    }
+  };
+
   if (isLoading) return <div className="p-4 text-gray-100">{t('history.loading')}</div>;
 
   return (
-    <div className="h-full overflow-y-auto hover-scroll bg-gray-900 text-gray-100 p-4">
+    <div
+      className="h-full overflow-y-auto hover-scroll bg-gray-900 text-gray-100 p-4"
+      onContextMenu={(event) => {
+        openMenu(event, { kind: 'historyBlank' });
+      }}
+    >
       <h2 className="text-lg font-bold mb-4">{t('history.title')}</h2>
       
       {jobs.length === 0 ? (
@@ -73,6 +176,9 @@ export function HistoryPanel() {
               <div 
                 className="p-3 flex items-center cursor-pointer hover:bg-gray-700"
                 onClick={() => toggleExpand(job.id)}
+                onContextMenu={(event) => {
+                  openMenu(event, { kind: 'historyJob', jobId: job.id });
+                }}
               >
                 <div className="mr-2">
                   {expandedJobs.includes(job.id) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
@@ -95,7 +201,13 @@ export function HistoryPanel() {
                 <div className="bg-gray-900 p-2 border-t border-gray-700">
                   <ul className="space-y-1">
                     {job.results.map((result, idx) => (
-                      <li key={idx} className="flex items-center gap-2 text-xs p-1 hover:bg-gray-800 rounded">
+                      <li
+                        key={idx}
+                        className="flex items-center gap-2 text-xs p-1 hover:bg-gray-800 rounded"
+                        onContextMenu={(event) => {
+                          openMenu(event, { kind: 'historyResult', jobId: job.id, resultIndex: idx });
+                        }}
+                      >
                         <StatusIcon status={result.status} />
                         <div className="flex-1 min-w-0">
                           <div className="truncate" title={result.file}>
@@ -174,6 +286,16 @@ export function HistoryPanel() {
           ))}
         </div>
       )}
+      <ContextMenu
+        open={menuState.open}
+        x={menuState.x}
+        y={menuState.y}
+        items={menuItems}
+        onClose={closeMenu}
+        onSelect={(id) => {
+          void handleContextCommand(id);
+        }}
+      />
     </div>
   );
 }

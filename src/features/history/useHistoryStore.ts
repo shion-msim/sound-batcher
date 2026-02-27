@@ -15,6 +15,8 @@ interface HistoryState {
   addJob: (job: BatchJob) => Promise<void>;
   updateJob: (id: string, updates: Partial<BatchJob>) => Promise<void>;
   loadHistory: () => Promise<void>;
+  removeJob: (id: string) => Promise<void>;
+  removeJobsByStatus: (statuses: BatchJob['status'][]) => Promise<void>;
   clearHistory: () => Promise<void>;
 }
 
@@ -53,6 +55,22 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   updateJob: async (id, updates) => {
     const { jobs } = get();
     const newJobs = jobs.map(j => j.id === id ? { ...j, ...updates } : j);
+    set({ jobs: newJobs });
+    await historyStore.set('jobs', newJobs);
+    await historyStore.save();
+  },
+
+  removeJob: async (id) => {
+    const { jobs } = get();
+    const newJobs = jobs.filter((job) => job.id !== id);
+    set({ jobs: newJobs });
+    await historyStore.set('jobs', newJobs);
+    await historyStore.save();
+  },
+
+  removeJobsByStatus: async (statuses) => {
+    const { jobs } = get();
+    const newJobs = jobs.filter((job) => !statuses.includes(job.status));
     set({ jobs: newJobs });
     await historyStore.set('jobs', newJobs);
     await historyStore.save();

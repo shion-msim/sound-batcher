@@ -1,20 +1,41 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { usePlayerStore } from './usePlayerStore';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { dirname } from '@tauri-apps/api/path';
 import { readFile } from '@tauri-apps/plugin-fs';
 import { useTranslation } from 'react-i18next';
 import { useFileBrowserStore } from '../file-browser/useFileBrowserStore';
+import { useProcessorStore } from '../processor/useProcessorStore';
+import { ContextMenu } from '../context-menu/ContextMenu';
+import { useContextMenu } from '../context-menu/useContextMenu';
+import type { ContextMenuCommandId, ContextMenuItem } from '../context-menu/context-menu.types';
+
+type PlayerContextTarget =
+  | { kind: 'waveformCard'; path: string }
+  | { kind: 'playerBlank' };
 
 export function WaveformPlayer() {
-  const { selectedFiles } = useFileBrowserStore();
-  const { currentFile, isPlaying, volume, setCurrentFile, play, togglePlay } = usePlayerStore();
+  const { selectedFiles, navigateTo, setSelection } = useFileBrowserStore();
+  const { currentFile, isPlaying, volume, setCurrentFile, play, togglePlay, stop } = usePlayerStore();
+  const { addToQueue } = useProcessorStore();
   const { t } = useTranslation();
+  const [durations, setDurations] = useState<Record<string, number | null>>({});
 
   const selectedAudioFiles = useMemo(
     () => selectedFiles.filter((path) => isAudioPath(path)),
     [selectedFiles],
   );
+
+  const handleDurationResolved = useCallback((path: string, seconds: number | null) => {
+    setDurations((prev) => {
+      if (prev[path] === seconds) {
+        return prev;
+      }
+      return { ...prev, [path]: seconds };
+    });
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -46,8 +67,79 @@ export function WaveformPlayer() {
     }
   }, [currentFile, selectedAudioFiles, setCurrentFile]);
 
+  const buildMenuItems = (target: PlayerContextTarget | null): ContextMenuItem[] => {
+    if (!target) return [];
+    if (target.kind === 'playerBlank') {
+      return [
+        { id: 'player.stopAll', label: 'すべて停止', enabled: Boolean(currentFile) },
+        { id: 'file.addSelectedToQueue', label: `選択項目をキューに追加 (${selectedAudioFiles.length})`, enabled: selectedAudioFiles.length > 0 },
+      ];
+    }
+    const isTargetPlaying = currentFile === target.path && isPlaying;
+    return [
+      { id: 'player.togglePlay', label: isTargetPlaying ? t('player.pause') : t('player.play') },
+      { id: 'file.addToQueue', label: 'キューに追加' },
+      { id: 'player.showInBrowser', label: 'ファイルブラウザで表示', separatorBefore: true },
+      { id: 'player.copyPath', label: 'パスをコピー' },
+      { id: 'player.copyDuration', label: '長さをコピー', enabled: Number.isFinite(durations[target.path]) },
+      { id: 'future.player.seekHere', label: 'この位置へ移動', enabled: false, comingSoon: true, separatorBefore: true },
+      { id: 'future.player.zoomReset', label: 'ズームをリセット', enabled: false, comingSoon: true },
+    ];
+  };
+
+  const { menuState, menuItems, openMenu, closeMenu } = useContextMenu<PlayerContextTarget>({
+    itemsBuilder: buildMenuItems,
+  });
+
+  const handleContextCommand = async (commandId: ContextMenuCommandId) => {
+    const target = menuState.target;
+    if (!target) return;
+
+    if (target.kind === 'playerBlank') {
+      if (commandId === 'player.stopAll') stop();
+      if (commandId === 'file.addSelectedToQueue') addToQueue(selectedAudioFiles);
+      return;
+    }
+
+    switch (commandId) {
+      case 'player.togglePlay':
+        if (currentFile !== target.path) {
+          play(target.path);
+        } else {
+          togglePlay();
+        }
+        break;
+      case 'file.addToQueue':
+        addToQueue([target.path]);
+        break;
+      case 'player.showInBrowser': {
+        const parent = await dirname(target.path);
+        await navigateTo(parent);
+        setSelection([target.path]);
+        break;
+      }
+      case 'player.copyPath':
+        await navigator.clipboard.writeText(target.path);
+        break;
+      case 'player.copyDuration': {
+        const seconds = durations[target.path];
+        if (seconds != null) {
+          await navigator.clipboard.writeText(formatDuration(seconds));
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  };
+
   return (
-    <div className="w-full h-full overflow-y-auto bg-gray-950 p-4">
+    <div
+      className="w-full h-full overflow-y-auto bg-gray-950 p-4"
+      onContextMenu={(event) => {
+        openMenu(event, { kind: 'playerBlank' });
+      }}
+    >
       {selectedAudioFiles.length > 0 ? (
         <div className="w-full mx-auto grid gap-4 grid-cols-1">
           {selectedAudioFiles.map((filePath) => (
@@ -61,6 +153,10 @@ export function WaveformPlayer() {
               onTogglePlay={togglePlay}
               playLabel={t('player.play')}
               pauseLabel={t('player.pause')}
+              onContextMenu={(event) => {
+                openMenu(event, { kind: 'waveformCard', path: filePath });
+              }}
+              onDurationResolved={handleDurationResolved}
             />
           ))}
         </div>
@@ -69,6 +165,16 @@ export function WaveformPlayer() {
           {t('player.selectFile')}
         </div>
       )}
+      <ContextMenu
+        open={menuState.open}
+        x={menuState.x}
+        y={menuState.y}
+        items={menuItems}
+        onClose={closeMenu}
+        onSelect={(id) => {
+          void handleContextCommand(id);
+        }}
+      />
     </div>
   );
 }
@@ -82,6 +188,8 @@ interface WaveformCardProps {
   onTogglePlay: () => void;
   playLabel: string;
   pauseLabel: string;
+  onContextMenu: (event: MouseEvent) => void;
+  onDurationResolved: (path: string, seconds: number | null) => void;
 }
 
 function WaveformCard({
@@ -93,6 +201,8 @@ function WaveformCard({
   onTogglePlay,
   playLabel,
   pauseLabel,
+  onContextMenu,
+  onDurationResolved,
 }: WaveformCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
@@ -100,6 +210,13 @@ function WaveformCard({
   const [error, setError] = useState<string | null>(null);
   const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
   const [themeVersion, setThemeVersion] = useState(0);
+  const isActiveRef = useRef(isActive);
+  const isPlayingRef = useRef(isPlaying);
+
+  useEffect(() => {
+    isActiveRef.current = isActive;
+    isPlayingRef.current = isPlaying;
+  }, [isActive, isPlaying]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -148,6 +265,8 @@ function WaveformCard({
   }, [themeVersion]);
 
   useEffect(() => {
+    let cancelled = false;
+
     const loadAudio = async () => {
       const wavesurfer = wavesurferRef.current;
       if (!wavesurfer) {
@@ -167,21 +286,32 @@ function WaveformCard({
           const blob = new Blob([bytes], { type: mimeTypeFromPath(filePath) });
           await wavesurfer.loadBlob(blob);
         }
+        if (cancelled) {
+          return;
+        }
         setIsLoading(false);
         setDurationSeconds(wavesurfer.getDuration());
+        onDurationResolved(filePath, wavesurfer.getDuration());
         fitWaveformToContainer(wavesurfer, containerRef.current);
 
-        if (isActive && isPlaying) {
+        if (isActiveRef.current && isPlayingRef.current) {
           await wavesurfer.play();
         }
       } catch (loadError) {
+        if (cancelled) {
+          return;
+        }
         console.error('Failed to load audio', loadError);
         setIsLoading(false);
         setError('Failed to load waveform');
+        onDurationResolved(filePath, null);
       }
     };
     void loadAudio();
-  }, [filePath, isActive, isPlaying]);
+    return () => {
+      cancelled = true;
+    };
+  }, [filePath, onDurationResolved]);
 
   useEffect(() => {
     const wavesurfer = wavesurferRef.current;
@@ -226,6 +356,7 @@ function WaveformCard({
   return (
     <section
       className={`rounded border p-3 ${isActive ? 'border-blue-500 bg-blue-950/20' : 'border-gray-800 bg-gray-900/40'}`}
+      onContextMenu={onContextMenu}
     >
       <div className="mb-2 flex items-center justify-between gap-3 text-xs text-gray-400">
         <span className="truncate" title={filePath}>

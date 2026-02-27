@@ -20,6 +20,8 @@ const areFileEntriesEqual = (a: FileEntry[], b: FileEntry[]): boolean => {
 };
 
 interface FileBrowserState {
+  tabs: FileBrowserTab[];
+  activeTabId: string | null;
   currentPath: string;
   files: FileEntry[];
   isLoading: boolean;
@@ -47,9 +49,26 @@ interface FileBrowserState {
   toggleSelection: (path: string) => void;
   setSelection: (paths: string[]) => void;
   clearSelection: () => void;
+  openTab: (path?: string) => Promise<void>;
+  switchTab: (tabId: string) => Promise<void>;
+  closeTab: (tabId: string) => Promise<void>;
+  closeOtherTabs: (tabId: string) => Promise<void>;
+  toggleTabPin: (tabId: string) => void;
 }
 
+interface FileBrowserTab {
+  id: string;
+  path: string;
+  history: string[];
+  futureHistory: string[];
+  isPinned: boolean;
+}
+
+const createTabId = () => `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
 export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
+  tabs: [],
+  activeTabId: null,
   currentPath: '',
   files: [],
   isLoading: false,
@@ -116,36 +135,69 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
     }
   },
   navigateTo: async (path) => {
-    const { currentPath } = get();
+    const { currentPath, activeTabId } = get();
     if (currentPath && currentPath !== path) {
       set((state) => ({
         history: [...state.history, currentPath],
         futureHistory: [],
+        tabs: state.tabs.map((tab) => {
+          if (tab.id !== activeTabId) return tab;
+          return {
+            ...tab,
+            history: [...tab.history, currentPath],
+            futureHistory: [],
+          };
+        }),
       }));
     }
     await get().loadFiles(path);
+    set((state) => ({
+      tabs: state.tabs.map((tab) => (tab.id === activeTabId ? { ...tab, path } : tab)),
+    }));
   },
   goBack: async () => {
-    const { history, currentPath } = get();
+    const { history, currentPath, activeTabId } = get();
     if (history.length === 0) return;
 
     const previousPath = history[history.length - 1];
     set((state) => ({
       history: state.history.slice(0, -1),
       futureHistory: currentPath ? [...state.futureHistory, currentPath] : state.futureHistory,
+      tabs: state.tabs.map((tab) => {
+        if (tab.id !== activeTabId) return tab;
+        return {
+          ...tab,
+          history: tab.history.slice(0, -1),
+          futureHistory: currentPath ? [...tab.futureHistory, currentPath] : tab.futureHistory,
+        };
+      }),
     }));
     await get().loadFiles(previousPath);
+    set((state) => ({
+      tabs: state.tabs.map((tab) => (tab.id === activeTabId ? { ...tab, path: previousPath } : tab)),
+    }));
   },
   goForward: async () => {
-    const { futureHistory, currentPath } = get();
+    const { futureHistory, currentPath, activeTabId } = get();
     if (futureHistory.length === 0) return;
 
     const nextPath = futureHistory[futureHistory.length - 1];
     set((state) => ({
       futureHistory: state.futureHistory.slice(0, -1),
       history: currentPath ? [...state.history, currentPath] : state.history,
+      tabs: state.tabs.map((tab) => {
+        if (tab.id !== activeTabId) return tab;
+        return {
+          ...tab,
+          futureHistory: tab.futureHistory.slice(0, -1),
+          history: currentPath ? [...tab.history, currentPath] : tab.history,
+        };
+      }),
     }));
     await get().loadFiles(nextPath);
+    set((state) => ({
+      tabs: state.tabs.map((tab) => (tab.id === activeTabId ? { ...tab, path: nextPath } : tab)),
+    }));
   },
   goUp: async () => {
     const { currentPath } = get();
@@ -173,6 +225,11 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
         set({ expandedPaths: expanded });
       }
       const tryLoad = async (path: string) => {
+        const firstTabId = createTabId();
+        set({
+          tabs: [{ id: firstTabId, path, history: [], futureHistory: [], isPinned: false }],
+          activeTabId: firstTabId,
+        });
         await get().loadFiles(path);
         return get().currentPath === path;
       };
@@ -235,4 +292,69 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
   },
   setSelection: (paths) => set({ selectedFiles: paths }),
   clearSelection: () => set({ selectedFiles: [] }),
+  openTab: async (path) => {
+    const { currentPath } = get();
+    const nextPath = path ?? currentPath;
+    if (!nextPath) return;
+    const tabId = createTabId();
+    set((state) => ({
+      tabs: [...state.tabs, { id: tabId, path: nextPath, history: [], futureHistory: [], isPinned: false }],
+      activeTabId: tabId,
+      history: [],
+      futureHistory: [],
+      selectedFiles: [],
+    }));
+    await get().loadFiles(nextPath);
+  },
+  switchTab: async (tabId) => {
+    const { tabs, activeTabId } = get();
+    if (tabId === activeTabId) return;
+    const nextTab = tabs.find((tab) => tab.id === tabId);
+    if (!nextTab) return;
+    set({
+      activeTabId: tabId,
+      history: nextTab.history,
+      futureHistory: nextTab.futureHistory,
+      selectedFiles: [],
+    });
+    await get().loadFiles(nextTab.path);
+  },
+  closeTab: async (tabId) => {
+    const { tabs, activeTabId } = get();
+    if (tabs.length <= 1) return;
+    const closingIndex = tabs.findIndex((tab) => tab.id === tabId);
+    if (closingIndex === -1) return;
+    const remainingTabs = tabs.filter((tab) => tab.id !== tabId);
+    if (activeTabId !== tabId) {
+      set({ tabs: remainingTabs });
+      return;
+    }
+    const nextActiveTab = remainingTabs[Math.max(0, closingIndex - 1)];
+    set({
+      tabs: remainingTabs,
+      activeTabId: nextActiveTab.id,
+      history: nextActiveTab.history,
+      futureHistory: nextActiveTab.futureHistory,
+      selectedFiles: [],
+    });
+    await get().loadFiles(nextActiveTab.path);
+  },
+  closeOtherTabs: async (tabId) => {
+    const { tabs } = get();
+    const keepTab = tabs.find((tab) => tab.id === tabId);
+    if (!keepTab) return;
+    set({
+      tabs: [keepTab],
+      activeTabId: keepTab.id,
+      history: keepTab.history,
+      futureHistory: keepTab.futureHistory,
+      selectedFiles: [],
+    });
+    await get().loadFiles(keepTab.path);
+  },
+  toggleTabPin: (tabId) => {
+    set((state) => ({
+      tabs: state.tabs.map((tab) => (tab.id === tabId ? { ...tab, isPinned: !tab.isPinned } : tab)),
+    }));
+  },
 }));

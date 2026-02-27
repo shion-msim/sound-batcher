@@ -2,13 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useFileBrowserStore } from './useFileBrowserStore';
 import { usePlayerStore } from '../player/usePlayerStore';
-import { Folder, Music, Pin, PinOff, ArrowUpLeft } from 'lucide-react';
+import { useProcessorStore } from '../processor/useProcessorStore';
+import { Folder, Music, Pin, PinOff, ArrowUpLeft, X, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { FileEntry } from './file-browser.types';
 import { isVisibleInFileBrowser } from './file-browser.utils';
 import { readDir, rename } from '@tauri-apps/plugin-fs';
 import { basename, dirname, join } from '@tauri-apps/api/path';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { ContextMenu } from '../context-menu/ContextMenu';
+import { useContextMenu } from '../context-menu/useContextMenu';
+import type { ContextMenuCommandId, ContextMenuItem } from '../context-menu/context-menu.types';
 
 const areFileEntriesEqual = (a: FileEntry[] | undefined, b: FileEntry[]): boolean => {
   if (!a) return false;
@@ -25,15 +29,25 @@ const areFileEntriesEqual = (a: FileEntry[] | undefined, b: FileEntry[]): boolea
   return true;
 };
 
+type FileBrowserContextTarget =
+  | { kind: 'fileRow'; path: string; selectedCount: number; inSelection: boolean }
+  | { kind: 'folderRow'; path: string; isPinned: boolean }
+  | { kind: 'pinnedRow'; path: string }
+  | { kind: 'treeBlank'; currentPath: string | null }
+  | { kind: 'tabRow'; tabId: string; isPinned: boolean; isOnlyTab: boolean };
+
 export function FileBrowser() {
   const { t } = useTranslation();
   const {
+    tabs, activeTabId,
     files, currentPath, isLoading, error,
     init, loadFiles, goUp, navigateTo, goBack, goForward, history, futureHistory,
     pinnedPaths, togglePin, expandedPaths, toggleDirectoryExpanded,
-    selectedFiles, toggleSelection, setSelection
+    selectedFiles, toggleSelection, setSelection,
+    openTab, switchTab, closeTab, closeOtherTabs, toggleTabPin,
   } = useFileBrowserStore();
   const { play } = usePlayerStore();
+  const { addToQueue } = useProcessorStore();
   const [childrenByPath, setChildrenByPath] = useState<Record<string, FileEntry[]>>({});
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
   const [isDropTargetActive, setIsDropTargetActive] = useState(false);
@@ -49,6 +63,126 @@ export function FileBrowser() {
   }, [init]);
 
   const selectionAnchorRef = useRef<string | null>(null);
+
+  const entryByPath = useMemo(() => {
+    const map = new Map<string, FileEntry>();
+    const walk = (entries: FileEntry[]) => {
+      for (const entry of entries) {
+        map.set(entry.path, entry);
+        const children = childrenByPath[entry.path];
+        if (entry.isDirectory && children) {
+          walk(children);
+        }
+      }
+    };
+    walk(files);
+    return map;
+  }, [childrenByPath, files]);
+
+  const collectVisibleSelectedAudioFiles = useCallback(() => {
+    return selectedFiles.filter((path) => {
+      const entry = entryByPath.get(path);
+      return Boolean(entry && !entry.isDirectory);
+    });
+  }, [entryByPath, selectedFiles]);
+
+  const collectAudioFilesFromDirectory = useCallback(async (directoryPath: string): Promise<string[]> => {
+    const result: string[] = [];
+    const walk = async (path: string) => {
+      const entries = await readDir(path);
+      for (const entry of entries) {
+        if (!entry.name) continue;
+        const fullPath = await join(path, entry.name);
+        if (entry.isDirectory) {
+          await walk(fullPath);
+          continue;
+        }
+        if (isVisibleInFileBrowser(entry.name, false)) {
+          result.push(fullPath);
+        }
+      }
+    };
+    await walk(directoryPath);
+    return result;
+  }, []);
+
+  const activeTab = useMemo(
+    () => tabs.find((tab) => tab.id === activeTabId) ?? null,
+    [activeTabId, tabs],
+  );
+
+  const buildMenuItems = useCallback((target: FileBrowserContextTarget | null): ContextMenuItem[] => {
+    if (!target) return [];
+
+    if (target.kind === 'fileRow') {
+      return [
+        { id: 'file.play', label: t('player.play', { defaultValue: '再生' }), shortcutHint: 'Enter' },
+        { id: 'file.addToQueue', label: 'キューに追加' },
+        {
+          id: 'file.addSelectedToQueue',
+          label: `選択項目をキューに追加 (${target.selectedCount})`,
+          enabled: target.selectedCount > 1 && target.inSelection,
+        },
+        { id: 'file.copyPath', label: 'パスをコピー', separatorBefore: true, shortcutHint: 'Ctrl+C' },
+        { id: 'file.revealInExplorer', label: 'エクスプローラーで表示' },
+      ];
+    }
+
+    if (target.kind === 'folderRow') {
+      return [
+        { id: 'folder.open', label: '開く' },
+        target.isPinned
+          ? { id: 'folder.unpin', label: 'ピン留めを解除' }
+          : { id: 'folder.pin', label: 'ピン留めする' },
+        { id: 'folder.copyPath', label: 'パスをコピー', separatorBefore: true },
+        { id: 'folder.addAudioFilesToQueue', label: '配下の音声をキューに追加' },
+        { id: 'folder.openInExplorer', label: 'エクスプローラーで表示' },
+        { id: 'folder.openInNewTab', label: '新しいタブで開く' },
+      ];
+    }
+
+    if (target.kind === 'pinnedRow') {
+      return [
+        { id: 'folder.open', label: '開く' },
+        { id: 'folder.openInNewTab', label: '新しいタブで開く' },
+        { id: 'folder.unpin', label: 'ピン留めを解除' },
+        { id: 'folder.copyPath', label: 'パスをコピー', separatorBefore: true },
+      ];
+    }
+
+    if (target.kind === 'tabRow') {
+      return [
+        target.isPinned
+          ? { id: 'tab.unpin', label: 'タブの固定を解除' }
+          : { id: 'tab.pin', label: 'タブを固定' },
+        { id: 'tab.close', label: 'タブを閉じる', enabled: !target.isOnlyTab },
+        { id: 'tab.closeOthers', label: '他のタブを閉じる', enabled: !target.isOnlyTab, separatorBefore: true },
+      ];
+    }
+
+    return [
+      { id: 'browser.refresh', label: '更新', shortcutHint: 'F5' },
+      { id: 'browser.back', label: '戻る', enabled: history.length > 0, shortcutHint: 'Alt+←' },
+      { id: 'browser.forward', label: '進む', enabled: futureHistory.length > 0, shortcutHint: 'Alt+→' },
+      { id: 'browser.up', label: '一つ上へ', enabled: Boolean(target.currentPath), separatorBefore: true },
+      {
+        id: 'browser.pinCurrentFolder',
+        label: pinnedPaths.includes(currentPath) ? '現在フォルダのピンを解除' : '現在フォルダをピン留め',
+        enabled: Boolean(target.currentPath),
+      },
+      {
+        id: activeTab?.isPinned ? 'tab.unpin' : 'tab.pin',
+        label: activeTab?.isPinned ? 'タブの固定を解除' : 'タブを固定',
+        enabled: Boolean(activeTab),
+        separatorBefore: true,
+      },
+      { id: 'tab.closeOthers', label: '他のタブを閉じる', enabled: tabs.length > 1 },
+    ];
+  }, [activeTab, currentPath, futureHistory.length, history.length, pinnedPaths, t, tabs.length]);
+
+  const { menuState, menuItems, openMenu, closeMenu } = useContextMenu<FileBrowserContextTarget>({
+    itemsBuilder: buildMenuItems,
+  });
 
   const handleFileDoubleClick = (file: FileEntry) => {
     setSelection([file.path]);
@@ -362,6 +496,121 @@ export function FileBrowser() {
     await Promise.all(expandedVisiblePaths.map((path) => loadChildren(path, true)));
   }, [currentPath, expandedVisiblePaths, loadChildren, loadFiles]);
 
+  const handleContextCommand = useCallback(async (commandId: ContextMenuCommandId) => {
+    const target = menuState.target;
+    if (!target) return;
+
+    const path =
+      target.kind === 'fileRow' || target.kind === 'folderRow' || target.kind === 'pinnedRow'
+        ? target.path
+        : null;
+
+    switch (commandId) {
+      case 'file.play':
+        if (path) {
+          setSelection([path]);
+          selectionAnchorRef.current = path;
+          play(path);
+        }
+        break;
+      case 'file.addToQueue':
+        if (path) addToQueue([path]);
+        break;
+      case 'file.addSelectedToQueue':
+        addToQueue(collectVisibleSelectedAudioFiles());
+        break;
+      case 'file.copyPath':
+      case 'folder.copyPath':
+        if (path) await navigator.clipboard.writeText(path);
+        break;
+      case 'file.revealInExplorer':
+        if (path) {
+          const parent = await dirname(path);
+          await navigateTo(parent);
+          setSelection([path]);
+          selectionAnchorRef.current = path;
+        }
+        break;
+      case 'folder.open':
+        if (path) await navigateTo(path);
+        break;
+      case 'folder.openInNewTab':
+        if (path) await openTab(path);
+        break;
+      case 'folder.pin':
+      case 'folder.unpin':
+        if (path) await togglePin(path);
+        break;
+      case 'folder.addAudioFilesToQueue':
+        if (path) {
+          const filesToQueue = await collectAudioFilesFromDirectory(path);
+          addToQueue(filesToQueue);
+        }
+        break;
+      case 'folder.openInExplorer':
+        if (path) await navigateTo(path);
+        break;
+      case 'browser.refresh':
+        await refreshFileTree();
+        break;
+      case 'browser.back':
+        await goBack();
+        break;
+      case 'browser.forward':
+        await goForward();
+        break;
+      case 'browser.up':
+        await goUp();
+        break;
+      case 'browser.pinCurrentFolder':
+        if (currentPath) await togglePin(currentPath);
+        break;
+      case 'tab.pin':
+      case 'tab.unpin':
+        if (target.kind === 'tabRow') {
+          toggleTabPin(target.tabId);
+        } else if (activeTabId) {
+          toggleTabPin(activeTabId);
+        }
+        break;
+      case 'tab.close':
+        if (target.kind === 'tabRow') {
+          await closeTab(target.tabId);
+        } else if (activeTabId) {
+          await closeTab(activeTabId);
+        }
+        break;
+      case 'tab.closeOthers':
+        if (target.kind === 'tabRow') {
+          await closeOtherTabs(target.tabId);
+        } else if (activeTabId) {
+          await closeOtherTabs(activeTabId);
+        }
+        break;
+      default:
+        break;
+    }
+  }, [
+    addToQueue,
+    collectAudioFilesFromDirectory,
+    collectVisibleSelectedAudioFiles,
+    closeOtherTabs,
+    closeTab,
+    currentPath,
+    goBack,
+    goForward,
+    goUp,
+    menuState.target,
+    navigateTo,
+    openTab,
+    play,
+    refreshFileTree,
+    setSelection,
+    toggleTabPin,
+    togglePin,
+    activeTabId,
+  ]);
+
   useEffect(() => {
     if (!currentPath) return;
 
@@ -557,6 +806,28 @@ export function FileBrowser() {
             }
             handleFileDoubleClick(file);
           }}
+          onContextMenu={(event) => {
+            if (file.isDirectory) {
+              openMenu(event, {
+                kind: 'folderRow',
+                path: file.path,
+                isPinned: pinnedPaths.includes(file.path),
+              });
+              return;
+            }
+
+            const inSelection = selectedFiles.includes(file.path);
+            if (!inSelection) {
+              setSelection([file.path]);
+              selectionAnchorRef.current = file.path;
+            }
+            openMenu(event, {
+              kind: 'fileRow',
+              path: file.path,
+              selectedCount: inSelection ? selectedFiles.length : 1,
+              inSelection: inSelection || selectedFiles.length === 0,
+            });
+          }}
         >
           {file.isDirectory ? (
             <button
@@ -628,6 +899,60 @@ export function FileBrowser() {
       )}
       {/* Top fixed controls */}
       <div className="shrink-0 mb-2 space-y-1.5 border-b border-gray-800 pb-2">
+        <div className="flex items-center gap-1 overflow-x-auto pb-1 hover-scroll">
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeTabId;
+            const tabName = tab.path.split(/[\\/]/).pop() || tab.path;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={`group inline-flex max-w-[200px] items-center gap-1 rounded px-2 py-1 text-xs transition-colors ${
+                  isActive
+                    ? 'bg-gray-900 text-gray-100'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                }`}
+                onClick={() => {
+                  void switchTab(tab.id);
+                }}
+                onContextMenu={(event) => {
+                  openMenu(event, {
+                    kind: 'tabRow',
+                    tabId: tab.id,
+                    isPinned: tab.isPinned,
+                    isOnlyTab: tabs.length === 1,
+                  });
+                }}
+                title={tab.path}
+              >
+                {tab.isPinned ? <Pin className="h-3 w-3 text-yellow-500" /> : null}
+                <span className="truncate">{tabName}</span>
+                {tabs.length > 1 && !tab.isPinned ? (
+                  <span
+                    className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded text-gray-500 hover:bg-gray-700 hover:text-gray-300"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void closeTab(tab.id);
+                    }}
+                  >
+                    <X className="h-3 w-3" />
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+            onClick={() => {
+              void openTab();
+            }}
+            title="新しいタブ"
+            aria-label="新しいタブ"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </div>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1 flex-1 min-w-0">
             <button
@@ -664,7 +989,15 @@ export function FileBrowser() {
       </div>
 
       {/* Scrollable file tree */}
-      <div className="min-h-0 flex-1 overflow-y-auto hover-scroll">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto hover-scroll"
+        onContextMenu={(event) => {
+          openMenu(event, {
+            kind: 'treeBlank',
+            currentPath: currentPath || null,
+          });
+        }}
+      >
         <ul className="space-y-0.5">
           {files.map((file) => renderEntry(file))}
         </ul>
@@ -695,6 +1028,12 @@ export function FileBrowser() {
                 key={path}
                 className="flex items-center gap-2 p-1 hover:bg-gray-800 rounded cursor-pointer text-sm text-gray-300"
                 onClick={() => navigateTo(path)}
+                onContextMenu={(event) => {
+                  openMenu(event, {
+                    kind: 'pinnedRow',
+                    path,
+                  });
+                }}
               >
                 <Pin className="w-3 h-3 text-yellow-500" />
                 <span className="truncate flex-1" title={path}>
@@ -714,6 +1053,16 @@ export function FileBrowser() {
           </ul>
         ) : null}
       </div>
+      <ContextMenu
+        open={menuState.open}
+        x={menuState.x}
+        y={menuState.y}
+        items={menuItems}
+        onClose={closeMenu}
+        onSelect={(id) => {
+          void handleContextCommand(id);
+        }}
+      />
     </div>
   );
 }
