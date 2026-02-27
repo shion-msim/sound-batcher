@@ -1,5 +1,7 @@
 # Audio Desk
 
+> 手っ取り早く使いたい方: [最新版をダウンロード（NSIS / MSI）](https://github.com/shion-msim/sound-batcher/releases/latest)
+
 Audio Deskは、Tauri + React + FFmpegで構築した音声プレビュー/バッチ処理アプリです。
 大量の音声ファイルを素早く確認し、まとめて処理するワークフローを想定しています。
 
