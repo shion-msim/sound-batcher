@@ -2,7 +2,7 @@ import { useProcessorStore } from './useProcessorStore';
 import { useFileBrowserStore } from '../file-browser/useFileBrowserStore';
 import { useSettingsStore } from '../settings/useSettingsStore';
 import { useTranslation } from 'react-i18next';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { dirname } from '@tauri-apps/api/path';
 import { ContextMenu } from '../context-menu/ContextMenu';
 import { useContextMenu } from '../context-menu/useContextMenu';
@@ -25,19 +25,40 @@ export function ProcessorPanel() {
     removeTasksByStatus,
     dedupeQueue,
   } = useProcessorStore();
-  const { files, selectedFiles, navigateTo } = useFileBrowserStore();
+  const { files, directoryChildrenByPath, selectedFiles, navigateTo } = useFileBrowserStore();
   const { renameOnly, setRenameOnly } = useSettingsStore();
   const { t } = useTranslation();
 
+  const visibleEntryMap = useMemo(() => {
+    const map = new Map<string, { isDirectory: boolean }>();
+    const collect = (entries: Array<{ path: string; isDirectory: boolean }>) => {
+      for (const entry of entries) {
+        map.set(entry.path, { isDirectory: entry.isDirectory });
+      }
+    };
+
+    collect(files);
+    for (const children of Object.values(directoryChildrenByPath)) {
+      collect(children);
+    }
+
+    return map;
+  }, [directoryChildrenByPath, files]);
+
+  const selectedAudioFiles = useMemo(
+    () =>
+      selectedFiles.filter((path) => {
+        const entry = visibleEntryMap.get(path);
+        return Boolean(entry && !entry.isDirectory);
+      }),
+    [selectedFiles, visibleEntryMap],
+  );
+
   const handleAddSelected = () => {
-    const filesToAdd = files
-        .filter(f => selectedFiles.includes(f.path) && !f.isDirectory)
-        .map(f => f.path);
-    
-    addToQueue(filesToAdd);
+    addToQueue(selectedAudioFiles);
   };
 
-  const hasSelection = selectedFiles.length > 0;
+  const hasSelection = selectedAudioFiles.length > 0;
 
   const buildMenuItems = useCallback((target: ProcessorContextTarget | null): ContextMenuItem[] => {
     if (!target) return [];
@@ -183,7 +204,7 @@ export function ProcessorPanel() {
                 ${hasSelection ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-800 text-gray-500 cursor-not-allowed'}
             `}
         >
-          {t('processor.addSelected', { count: selectedFiles.length })}
+          {t('processor.addSelected', { count: selectedAudioFiles.length })}
         </button>
         <button onClick={clearQueue} className="px-3 py-1 bg-red-900/50 text-red-200 rounded hover:bg-red-900 text-sm">
           {t('processor.clear')}
