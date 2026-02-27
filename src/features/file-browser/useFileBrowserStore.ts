@@ -9,13 +9,20 @@ interface FileBrowserState {
   files: FileEntry[];
   isLoading: boolean;
   error: string | null;
+  history: string[];
+  futureHistory: string[];
+  expandedPaths: string[];
   pinnedPaths: string[];
   selectedFiles: string[];
   setCurrentPath: (path: string) => void;
   loadFiles: (path: string) => Promise<void>;
+  navigateTo: (path: string) => Promise<void>;
+  goBack: () => Promise<void>;
+  goForward: () => Promise<void>;
   goUp: () => Promise<void>;
   init: () => Promise<void>;
   togglePin: (path: string) => Promise<void>;
+  toggleDirectoryExpanded: (path: string) => Promise<void>;
   toggleSelection: (path: string) => void;
   clearSelection: () => void;
 }
@@ -25,6 +32,9 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
   files: [],
   isLoading: false,
   error: null,
+  history: [],
+  futureHistory: [],
+  expandedPaths: [],
   pinnedPaths: [],
   selectedFiles: [],
   setCurrentPath: (path) => set({ currentPath: path }),
@@ -51,6 +61,38 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
       set({ isLoading: false });
     }
   },
+  navigateTo: async (path) => {
+    const { currentPath } = get();
+    if (currentPath && currentPath !== path) {
+      set((state) => ({
+        history: [...state.history, currentPath],
+        futureHistory: [],
+      }));
+    }
+    await get().loadFiles(path);
+  },
+  goBack: async () => {
+    const { history, currentPath } = get();
+    if (history.length === 0) return;
+
+    const previousPath = history[history.length - 1];
+    set((state) => ({
+      history: state.history.slice(0, -1),
+      futureHistory: currentPath ? [...state.futureHistory, currentPath] : state.futureHistory,
+    }));
+    await get().loadFiles(previousPath);
+  },
+  goForward: async () => {
+    const { futureHistory, currentPath } = get();
+    if (futureHistory.length === 0) return;
+
+    const nextPath = futureHistory[futureHistory.length - 1];
+    set((state) => ({
+      futureHistory: state.futureHistory.slice(0, -1),
+      history: currentPath ? [...state.history, currentPath] : state.history,
+    }));
+    await get().loadFiles(nextPath);
+  },
   goUp: async () => {
     const { currentPath } = get();
     if (!currentPath) return;
@@ -58,7 +100,7 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
         const lastSep = Math.max(currentPath.lastIndexOf('/'), currentPath.lastIndexOf('\\'));
         if (lastSep > 0) {
             const parent = currentPath.substring(0, lastSep);
-            await get().loadFiles(parent);
+            await get().navigateTo(parent);
         } else if (lastSep === -1 && currentPath.length > 0) {
             // Maybe root
         }
@@ -69,8 +111,12 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
   init: async () => {
     try {
       const pinned = await settingsStore.get<string[]>('pinnedPaths');
+      const expanded = await settingsStore.get<string[]>('expandedDirectoryPaths');
       if (pinned) {
         set({ pinnedPaths: pinned });
+      }
+      if (expanded) {
+        set({ expandedPaths: expanded });
       }
       const tryLoad = async (path: string) => {
         await get().loadFiles(path);
@@ -112,6 +158,17 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
     
     set({ pinnedPaths: newPinned });
     await settingsStore.set('pinnedPaths', newPinned);
+    await settingsStore.save();
+  },
+  toggleDirectoryExpanded: async (path) => {
+    const { expandedPaths } = get();
+    const isExpanded = expandedPaths.includes(path);
+    const nextExpandedPaths = isExpanded
+      ? expandedPaths.filter((p) => p !== path)
+      : [...expandedPaths, path];
+
+    set({ expandedPaths: nextExpandedPaths });
+    await settingsStore.set('expandedDirectoryPaths', nextExpandedPaths);
     await settingsStore.save();
   },
   toggleSelection: (path) => {
