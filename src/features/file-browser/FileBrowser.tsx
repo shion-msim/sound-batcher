@@ -14,21 +14,6 @@ import { ContextMenu } from '../context-menu/ContextMenu';
 import { useContextMenu } from '../context-menu/useContextMenu';
 import type { ContextMenuCommandId, ContextMenuItem } from '../context-menu/context-menu.types';
 
-const areFileEntriesEqual = (a: FileEntry[] | undefined, b: FileEntry[]): boolean => {
-  if (!a) return false;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) {
-    if (
-      a[i].path !== b[i].path ||
-      a[i].name !== b[i].name ||
-      a[i].isDirectory !== b[i].isDirectory
-    ) {
-      return false;
-    }
-  }
-  return true;
-};
-
 type FileBrowserContextTarget =
   | { kind: 'fileRow'; path: string; selectedCount: number; inSelection: boolean }
   | { kind: 'folderRow'; path: string; isPinned: boolean }
@@ -42,14 +27,13 @@ export function FileBrowser() {
     tabs, activeTabId,
     files, currentPath, isLoading, error,
     init, loadFiles, goUp, navigateTo, goBack, goForward, history, futureHistory,
-    pinnedPaths, togglePin, expandedPaths, toggleDirectoryExpanded,
+    pinnedPaths, togglePin,
     selectedFiles, toggleSelection, setSelection,
-    openTab, switchTab, closeTab, closeOtherTabs, toggleTabPin,
+    columnPathChain, directoryChildrenByPath, setColumnPathChain, loadDirectoryEntries,
+    openTab, switchTab, closeTab, closeOtherTabs, toggleTabPin, moveTab,
   } = useFileBrowserStore();
   const { play } = usePlayerStore();
   const { addToQueue } = useProcessorStore();
-  const [childrenByPath, setChildrenByPath] = useState<Record<string, FileEntry[]>>({});
-  const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
   const [isDropTargetActive, setIsDropTargetActive] = useState(false);
   const [dropTargetDirectoryPath, setDropTargetDirectoryPath] = useState<string | null>(null);
   const [dragPreview, setDragPreview] = useState<{ x: number; y: number; count: number } | null>(null);
@@ -57,19 +41,21 @@ export function FileBrowser() {
   const clickTimeoutRef = useRef<number | null>(null);
   const pendingInternalDragRef = useRef<{ paths: string[]; startX: number; startY: number } | null>(null);
   const suppressClickRef = useRef(false);
+  const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
+  const [tabDropTargetId, setTabDropTargetId] = useState<string | null>(null);
 
   useEffect(() => {
     void init();
   }, [init]);
 
-  const selectionAnchorRef = useRef<string | null>(null);
+  const selectionAnchorRef = useRef<{ path: string; columnIndex: number | null } | null>(null);
 
   const entryByPath = useMemo(() => {
     const map = new Map<string, FileEntry>();
     const walk = (entries: FileEntry[]) => {
       for (const entry of entries) {
         map.set(entry.path, entry);
-        const children = childrenByPath[entry.path];
+        const children = directoryChildrenByPath[entry.path];
         if (entry.isDirectory && children) {
           walk(children);
         }
@@ -77,7 +63,7 @@ export function FileBrowser() {
     };
     walk(files);
     return map;
-  }, [childrenByPath, files]);
+  }, [directoryChildrenByPath, files]);
 
   const collectVisibleSelectedAudioFiles = useCallback(() => {
     return selectedFiles.filter((path) => {
@@ -186,7 +172,7 @@ export function FileBrowser() {
 
   const handleFileDoubleClick = (file: FileEntry) => {
     setSelection([file.path]);
-    selectionAnchorRef.current = file.path;
+    selectionAnchorRef.current = { path: file.path, columnIndex: null };
 
     if (file.isDirectory) {
       void navigateTo(file.path);
@@ -239,7 +225,7 @@ export function FileBrowser() {
       return normalizedPath.startsWith(`${normalizedParent}/`);
     });
     setSelection(selectionInParent.length > 0 ? selectionInParent : [audioFiles[0]]);
-    selectionAnchorRef.current = audioFiles[0];
+    selectionAnchorRef.current = { path: audioFiles[0], columnIndex: null };
   }, [navigateTo, setSelection]);
 
   const moveFilesToDirectory = useCallback(async (paths: string[], targetDirectoryPath: string) => {
@@ -276,7 +262,7 @@ export function FileBrowser() {
 
     await navigateTo(targetDirectoryPath);
     setSelection(movedDestinationPaths);
-    selectionAnchorRef.current = movedDestinationPaths[0];
+    selectionAnchorRef.current = { path: movedDestinationPaths[0], columnIndex: null };
   }, [navigateTo, setSelection]);
 
   const getDirectoryPathFromPoint = useCallback((x: number, y: number): string | null => {
@@ -295,96 +281,31 @@ export function FileBrowser() {
     };
   }, [selectedFiles]);
 
-  const loadChildren = useCallback(async (path: string, force = false) => {
-    const hasCachedChildren = Boolean(childrenByPath[path]);
-    if (!force && hasCachedChildren) return;
-
-    // Keep already-rendered children visible during background refreshes.
-    const shouldTrackLoading = !(force && hasCachedChildren);
-    if (shouldTrackLoading) {
-      setLoadingDirs((prev) => {
-        const next = new Set(prev);
-        next.add(path);
-        return next;
-      });
+  const normalizedColumnChain = useMemo(() => {
+    if (!currentPath) return [];
+    if (columnPathChain.length === 0 || columnPathChain[0] !== currentPath) {
+      return [currentPath];
     }
-
-    try {
-      const entries = await readDir(path);
-      const childFiles: FileEntry[] = await Promise.all(
-        entries.map(async (entry) => ({
-          name: entry.name,
-          path: await join(path, entry.name),
-          isDirectory: entry.isDirectory,
-        })),
-      );
-      const visibleChildFiles = childFiles.filter((entry) =>
-        isVisibleInFileBrowser(entry.name, entry.isDirectory),
-      );
-
-      visibleChildFiles.sort((a, b) => {
-        if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
-        return a.isDirectory ? -1 : 1;
-      });
-
-      setChildrenByPath((prev) => {
-        if (areFileEntriesEqual(prev[path], visibleChildFiles)) {
-          return prev;
-        }
-        return { ...prev, [path]: visibleChildFiles };
-      });
-    } catch (childError) {
-      console.error('Failed to read child dir', childError);
-    } finally {
-      if (shouldTrackLoading) {
-        setLoadingDirs((prev) => {
-          const next = new Set(prev);
-          next.delete(path);
-          return next;
-        });
-      }
-    }
-  }, [childrenByPath]);
-
-  const toggleDirectory = useCallback((path: string) => {
-    const isExpanded = expandedPaths.includes(path);
-    const shouldLoad = !isExpanded && !childrenByPath[path];
-
-    if (shouldLoad) {
-      void loadChildren(path);
-    }
-    void toggleDirectoryExpanded(path);
-  }, [childrenByPath, expandedPaths, loadChildren, toggleDirectoryExpanded]);
+    return columnPathChain;
+  }, [columnPathChain, currentPath]);
 
   useEffect(() => {
-    const pendingLoads: string[] = [];
-
-    const walkVisible = (entries: FileEntry[]) => {
-      for (const entry of entries) {
-        if (!entry.isDirectory) continue;
-
-        const isExpanded = expandedPaths.includes(entry.path);
-        if (!isExpanded) continue;
-
-        const children = childrenByPath[entry.path];
-        const isLoadingChild = loadingDirs.has(entry.path);
-        if (!children && !isLoadingChild) {
-          pendingLoads.push(entry.path);
-          continue;
-        }
-
-        if (children) {
-          walkVisible(children);
-        }
+    if (!currentPath) return;
+    if (normalizedColumnChain.length === 1 && normalizedColumnChain[0] === currentPath) {
+      if (columnPathChain.length === 1 && columnPathChain[0] === currentPath) {
+        return;
       }
-    };
+      setColumnPathChain([currentPath]);
+    }
+  }, [columnPathChain, currentPath, normalizedColumnChain, setColumnPathChain]);
 
-    walkVisible(files);
-
-    pendingLoads.forEach((path) => {
-      void loadChildren(path);
+  useEffect(() => {
+    normalizedColumnChain.slice(1).forEach((path) => {
+      void loadDirectoryEntries(path).catch((childError) => {
+        console.error('Failed to read child dir', childError);
+      });
     });
-  }, [childrenByPath, expandedPaths, files, loadChildren, loadingDirs]);
+  }, [loadDirectoryEntries, normalizedColumnChain]);
 
   useEffect(() => {
     return () => {
@@ -470,31 +391,20 @@ export function FileBrowser() {
     };
   }, [dropTargetDirectoryPath, getDirectoryPathFromPoint, internalDraggedPaths, moveFilesToDirectory]);
 
-  const expandedVisiblePaths = useMemo(() => {
-    const paths: string[] = [];
-
-    const walkExpanded = (entries: FileEntry[]) => {
-      for (const entry of entries) {
-        if (!entry.isDirectory) continue;
-        if (!expandedPaths.includes(entry.path)) continue;
-        paths.push(entry.path);
-        const children = childrenByPath[entry.path];
-        if (children) {
-          walkExpanded(children);
-        }
-      }
-    };
-
-    walkExpanded(files);
-    return paths;
-  }, [childrenByPath, expandedPaths, files]);
-
   const refreshFileTree = useCallback(async () => {
     if (!currentPath) return;
 
     await loadFiles(currentPath, { preserveSelection: true, silent: true });
-    await Promise.all(expandedVisiblePaths.map((path) => loadChildren(path, true)));
-  }, [currentPath, expandedVisiblePaths, loadChildren, loadFiles]);
+    await Promise.all(
+      normalizedColumnChain.slice(1).map(async (path) => {
+        try {
+          await loadDirectoryEntries(path, { force: true });
+        } catch (childError) {
+          console.error('Failed to refresh child dir', childError);
+        }
+      }),
+    );
+  }, [currentPath, loadDirectoryEntries, loadFiles, normalizedColumnChain]);
 
   const handleContextCommand = useCallback(async (commandId: ContextMenuCommandId) => {
     const target = menuState.target;
@@ -509,7 +419,7 @@ export function FileBrowser() {
       case 'file.play':
         if (path) {
           setSelection([path]);
-          selectionAnchorRef.current = path;
+          selectionAnchorRef.current = { path, columnIndex: null };
           play(path);
         }
         break;
@@ -528,7 +438,7 @@ export function FileBrowser() {
           const parent = await dirname(path);
           await navigateTo(parent);
           setSelection([path]);
-          selectionAnchorRef.current = path;
+          selectionAnchorRef.current = { path, columnIndex: null };
         }
         break;
       case 'folder.open':
@@ -694,58 +604,87 @@ export function FileBrowser() {
     };
   }, [goBack, goForward]);
 
-  const visibleEntryPaths = useMemo(() => {
-    const paths: string[] = [];
+  const columns = useMemo(() => {
+    if (!currentPath) return [] as Array<{
+      directoryPath: string;
+      entries: FileEntry[];
+      selectedPath: string | null;
+    }>;
 
-    const walkVisible = (entries: FileEntry[]) => {
-      for (const entry of entries) {
-        paths.push(entry.path);
-        if (entry.isDirectory && expandedPaths.includes(entry.path)) {
-          const children = childrenByPath[entry.path] ?? [];
-          walkVisible(children);
-        }
-      }
-    };
+    const result: Array<{ directoryPath: string; entries: FileEntry[]; selectedPath: string | null }> = [
+      {
+        directoryPath: currentPath,
+        entries: files,
+        selectedPath: normalizedColumnChain[1] ?? null,
+      },
+    ];
 
-    walkVisible(files);
-    return paths;
-  }, [childrenByPath, expandedPaths, files]);
+    for (let i = 1; i < normalizedColumnChain.length; i += 1) {
+      const directoryPath = normalizedColumnChain[i];
+      result.push({
+        directoryPath,
+        entries: directoryChildrenByPath[directoryPath] ?? [],
+        selectedPath: normalizedColumnChain[i + 1] ?? null,
+      });
+    }
 
-  const handleFileClick = (file: FileEntry, event: MouseEvent<HTMLDivElement>) => {
+    return result;
+  }, [currentPath, directoryChildrenByPath, files, normalizedColumnChain]);
+
+  const handleFileClick = (
+    file: FileEntry,
+    event: MouseEvent<HTMLDivElement>,
+    columnIndex: number,
+    columnEntries: FileEntry[],
+  ) => {
     const isCtrlLike = event.ctrlKey || event.metaKey;
 
     if (event.shiftKey) {
-      const anchorPath = selectionAnchorRef.current;
-      if (!anchorPath) {
+      const anchor = selectionAnchorRef.current;
+      if (!anchor || anchor.columnIndex !== columnIndex) {
         setSelection([file.path]);
-        selectionAnchorRef.current = file.path;
+        selectionAnchorRef.current = { path: file.path, columnIndex };
         return;
       }
 
-      const anchorIndex = visibleEntryPaths.indexOf(anchorPath);
-      const targetIndex = visibleEntryPaths.indexOf(file.path);
+      const columnPaths = columnEntries.map((entry) => entry.path);
+      const anchorIndex = columnPaths.indexOf(anchor.path);
+      const targetIndex = columnPaths.indexOf(file.path);
       if (anchorIndex === -1 || targetIndex === -1) {
         setSelection([file.path]);
-        selectionAnchorRef.current = file.path;
+        selectionAnchorRef.current = { path: file.path, columnIndex };
         return;
       }
 
       const [start, end] = anchorIndex < targetIndex
         ? [anchorIndex, targetIndex]
         : [targetIndex, anchorIndex];
-      const range = visibleEntryPaths.slice(start, end + 1);
+      const range = columnPaths.slice(start, end + 1);
       setSelection(range);
       return;
     }
 
     if (isCtrlLike) {
       toggleSelection(file.path);
-      selectionAnchorRef.current = file.path;
+      selectionAnchorRef.current = { path: file.path, columnIndex };
+      if (file.isDirectory) {
+        const baseChain = normalizedColumnChain.slice(0, columnIndex + 1);
+        void loadDirectoryEntries(file.path).catch(() => {});
+        setColumnPathChain([...baseChain, file.path]);
+      }
       return;
     }
 
     setSelection([file.path]);
-    selectionAnchorRef.current = file.path;
+    selectionAnchorRef.current = { path: file.path, columnIndex };
+
+    const baseChain = normalizedColumnChain.slice(0, columnIndex + 1);
+    if (file.isDirectory) {
+      void loadDirectoryEntries(file.path).catch(() => {});
+      setColumnPathChain([...baseChain, file.path]);
+      return;
+    }
+    setColumnPathChain(baseChain);
   };
 
   const isCurrentPinned = pinnedPaths.includes(currentPath);
@@ -766,23 +705,19 @@ export function FileBrowser() {
     );
   }
 
-  const renderEntry = (file: FileEntry, depth = 0) => {
+  const renderColumnEntry = (file: FileEntry, columnIndex: number, columnEntries: FileEntry[]) => {
     const isSelected = selectedFiles.includes(file.path);
-    const isExpanded = expandedPaths.includes(file.path);
-    const children = childrenByPath[file.path] ?? [];
-    const isChildLoading = loadingDirs.has(file.path);
     const isDropTargetDirectory = file.isDirectory && dropTargetDirectoryPath === file.path;
 
     return (
-      <li key={file.path}>
+      <li key={`${columnIndex}-${file.path}`}>
         <div
           data-directory-path={file.isDirectory ? file.path : undefined}
           className={`
-            flex items-center gap-1.5 py-0.5 pr-1 rounded cursor-pointer text-sm select-none
+            flex items-center gap-1.5 py-1 px-2 rounded cursor-pointer text-sm select-none
             ${isSelected ? 'file-row-selected bg-blue-900/25 text-blue-100' : 'hover:bg-gray-800 text-gray-300'}
             ${isDropTargetDirectory ? 'ring-1 ring-blue-500 bg-blue-900/20' : ''}
           `}
-          style={{ paddingLeft: `${4 + depth * 20}px` }}
           onMouseDown={(event) => startPendingInternalDrag(file, event)}
           onClick={(event) => {
             if (suppressClickRef.current) {
@@ -795,7 +730,7 @@ export function FileBrowser() {
 
             // Keep single-click as selection-only, and avoid toggling on double-click.
             clickTimeoutRef.current = window.setTimeout(() => {
-              handleFileClick(file, event);
+              handleFileClick(file, event, columnIndex, columnEntries);
               clickTimeoutRef.current = null;
             }, 200);
           }}
@@ -819,7 +754,7 @@ export function FileBrowser() {
             const inSelection = selectedFiles.includes(file.path);
             if (!inSelection) {
               setSelection([file.path]);
-              selectionAnchorRef.current = file.path;
+              selectionAnchorRef.current = { path: file.path, columnIndex };
             }
             openMenu(event, {
               kind: 'fileRow',
@@ -830,37 +765,13 @@ export function FileBrowser() {
           }}
         >
           {file.isDirectory ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                toggleDirectory(file.path);
-              }}
-              className="inline-flex !h-4 !w-4 items-center justify-center !p-0 !border-0 !bg-transparent text-gray-400 hover:text-gray-200"
-              title={isExpanded ? '折りたたむ' : '展開する'}
-            >
-              <span className="text-[10px] leading-none font-semibold">{isExpanded ? 'v' : '>'}</span>
-            </button>
-          ) : (
-            <span className="inline-block w-4 h-4 shrink-0" aria-hidden />
-          )}
-
-          {file.isDirectory ? (
             <Folder className="w-4 h-4 text-blue-400" />
           ) : (
             <Music className="w-4 h-4 text-emerald-400" />
           )}
           <span className="truncate flex-1">{file.name}</span>
+          {file.isDirectory ? <span className="text-[11px] text-gray-500">{'>'}</span> : null}
         </div>
-
-        {file.isDirectory && isExpanded && (
-          <ul className="space-y-0.5">
-            {isChildLoading && children.length === 0 && (
-              <li className="text-xs text-gray-500 pl-8">{t('fileBrowser.loading')}</li>
-            )}
-            {children.map((child) => renderEntry(child, depth + 1))}
-          </ul>
-        )}
       </li>
     );
   };
@@ -907,11 +818,38 @@ export function FileBrowser() {
               <button
                 key={tab.id}
                 type="button"
+                draggable
                 className={`group inline-flex max-w-[200px] items-center gap-1 rounded px-2 py-1 text-xs transition-colors ${
                   isActive
                     ? 'bg-gray-900 text-gray-100'
                     : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                } ${draggingTabId === tab.id ? 'opacity-60' : ''} ${
+                  tabDropTargetId === tab.id ? 'ring-1 ring-blue-500' : ''
                 }`}
+                onDragStart={(event) => {
+                  setDraggingTabId(tab.id);
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/plain', tab.id);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (draggingTabId && draggingTabId !== tab.id) {
+                    setTabDropTargetId(tab.id);
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const sourceTabId = draggingTabId ?? event.dataTransfer.getData('text/plain');
+                  if (sourceTabId && sourceTabId !== tab.id) {
+                    moveTab(sourceTabId, tab.id);
+                  }
+                  setDraggingTabId(null);
+                  setTabDropTargetId(null);
+                }}
+                onDragEnd={() => {
+                  setDraggingTabId(null);
+                  setTabDropTargetId(null);
+                }}
                 onClick={() => {
                   void switchTab(tab.id);
                 }}
@@ -988,9 +926,9 @@ export function FileBrowser() {
         <div className="text-xs text-gray-500 truncate px-1" title={currentPath}>{currentPath}</div>
       </div>
 
-      {/* Scrollable file tree */}
+      {/* Scrollable Miller columns */}
       <div
-        className="min-h-0 flex-1 overflow-y-auto hover-scroll"
+        className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden hover-scroll"
         onContextMenu={(event) => {
           openMenu(event, {
             kind: 'treeBlank',
@@ -998,9 +936,21 @@ export function FileBrowser() {
           });
         }}
       >
-        <ul className="space-y-0.5">
-          {files.map((file) => renderEntry(file))}
-        </ul>
+        <div className="flex h-full min-w-max gap-2 pr-2">
+          {columns.map((column, columnIndex) => (
+            <section
+              key={`${column.directoryPath}-${columnIndex}`}
+              className="w-64 shrink-0 h-full border border-gray-800 rounded bg-gray-900/40 flex flex-col"
+            >
+              <div className="px-2 py-1.5 text-[11px] text-gray-500 border-b border-gray-800 truncate" title={column.directoryPath}>
+                {column.directoryPath.split(/[\\/]/).pop() || column.directoryPath}
+              </div>
+              <ul className="min-h-0 flex-1 overflow-y-auto hover-scroll p-1 space-y-0.5">
+                {column.entries.map((file) => renderColumnEntry(file, columnIndex, column.entries))}
+              </ul>
+            </section>
+          ))}
+        </div>
       </div>
 
       {/* Bottom fixed pin controls */}

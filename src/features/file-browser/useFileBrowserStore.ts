@@ -5,7 +5,8 @@ import { FileEntry } from './file-browser.types';
 import { isVisibleInFileBrowser } from './file-browser.utils';
 import { settingsStore } from '../../lib/store';
 
-const areFileEntriesEqual = (a: FileEntry[], b: FileEntry[]): boolean => {
+const areFileEntriesEqual = (a: FileEntry[] | undefined, b: FileEntry[] | undefined): boolean => {
+  if (!a || !b) return a === b;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
     if (
@@ -24,6 +25,8 @@ interface FileBrowserState {
   activeTabId: string | null;
   currentPath: string;
   files: FileEntry[];
+  columnPathChain: string[];
+  directoryChildrenByPath: Record<string, FileEntry[]>;
   isLoading: boolean;
   error: string | null;
   history: string[];
@@ -49,11 +52,19 @@ interface FileBrowserState {
   toggleSelection: (path: string) => void;
   setSelection: (paths: string[]) => void;
   clearSelection: () => void;
+  setColumnPathChain: (paths: string[]) => void;
+  loadDirectoryEntries: (
+    path: string,
+    options?: {
+      force?: boolean;
+    }
+  ) => Promise<FileEntry[]>;
   openTab: (path?: string) => Promise<void>;
   switchTab: (tabId: string) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   closeOtherTabs: (tabId: string) => Promise<void>;
   toggleTabPin: (tabId: string) => void;
+  moveTab: (sourceTabId: string, targetTabId: string) => void;
 }
 
 interface FileBrowserTab {
@@ -66,11 +77,22 @@ interface FileBrowserTab {
 
 const createTabId = () => `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+const sortVisibleEntries = (entries: FileEntry[]): FileEntry[] => {
+  const visible = entries.filter((entry) => isVisibleInFileBrowser(entry.name, entry.isDirectory));
+  visible.sort((a, b) => {
+    if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
+    return a.isDirectory ? -1 : 1;
+  });
+  return visible;
+};
+
 export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
   tabs: [],
   activeTabId: null,
   currentPath: '',
   files: [],
+  columnPathChain: [],
+  directoryChildrenByPath: {},
   isLoading: false,
   error: null,
   history: [],
@@ -100,29 +122,29 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
         path: await join(path, entry.name),
         isDirectory: entry.isDirectory,
       })));
-      const visibleFiles = files.filter((entry) =>
-        isVisibleInFileBrowser(entry.name, entry.isDirectory),
-      );
-      
-      visibleFiles.sort((a, b) => {
-        if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
-        return a.isDirectory ? -1 : 1;
-      });
-      
+      const visibleFiles = sortVisibleEntries(files);
+
       set((state) => {
         const nextSelectedFiles = preserveSelection ? state.selectedFiles : [];
         const isFileListChanged = !areFileEntriesEqual(state.files, visibleFiles);
         const isPathChanged = state.currentPath !== path;
         const isSelectionChanged = state.selectedFiles !== nextSelectedFiles;
+        const isRootChildChanged = !areFileEntriesEqual(state.directoryChildrenByPath[path], visibleFiles);
 
-        if (!isFileListChanged && !isPathChanged && !isSelectionChanged) {
+        if (!isFileListChanged && !isPathChanged && !isSelectionChanged && !isRootChildChanged) {
           return state;
         }
+
+        const nextDirectoryChildrenByPath = isRootChildChanged
+          ? { ...state.directoryChildrenByPath, [path]: visibleFiles }
+          : state.directoryChildrenByPath;
 
         return {
           files: isFileListChanged ? visibleFiles : state.files,
           currentPath: isPathChanged ? path : state.currentPath,
           selectedFiles: nextSelectedFiles,
+          directoryChildrenByPath: nextDirectoryChildrenByPath,
+          columnPathChain: isPathChanged ? [path] : state.columnPathChain,
         };
       });
     } catch (error) {
@@ -292,6 +314,53 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
   },
   setSelection: (paths) => set({ selectedFiles: paths }),
   clearSelection: () => set({ selectedFiles: [] }),
+  setColumnPathChain: (paths) => {
+    const normalized = paths.filter(Boolean);
+    set((state) => {
+      if (state.columnPathChain.length === normalized.length) {
+        let identical = true;
+        for (let i = 0; i < normalized.length; i += 1) {
+          if (state.columnPathChain[i] !== normalized[i]) {
+            identical = false;
+            break;
+          }
+        }
+        if (identical) {
+          return state;
+        }
+      }
+      return { columnPathChain: normalized };
+    });
+  },
+  loadDirectoryEntries: async (path, options) => {
+    const force = options?.force ?? false;
+    const cached = get().directoryChildrenByPath[path];
+    if (!force && cached) {
+      return cached;
+    }
+
+    const entries = await readDir(path);
+    const childFiles: FileEntry[] = await Promise.all(entries.map(async (entry) => ({
+      name: entry.name,
+      path: await join(path, entry.name),
+      isDirectory: entry.isDirectory,
+    })));
+    const visibleChildFiles = sortVisibleEntries(childFiles);
+
+    set((state) => {
+      if (areFileEntriesEqual(state.directoryChildrenByPath[path], visibleChildFiles)) {
+        return state;
+      }
+      return {
+        directoryChildrenByPath: {
+          ...state.directoryChildrenByPath,
+          [path]: visibleChildFiles,
+        },
+      };
+    });
+
+    return visibleChildFiles;
+  },
   openTab: async (path) => {
     const { currentPath } = get();
     const nextPath = path ?? currentPath;
@@ -356,5 +425,21 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
     set((state) => ({
       tabs: state.tabs.map((tab) => (tab.id === tabId ? { ...tab, isPinned: !tab.isPinned } : tab)),
     }));
+  },
+  moveTab: (sourceTabId, targetTabId) => {
+    if (sourceTabId === targetTabId) return;
+    set((state) => {
+      const sourceIndex = state.tabs.findIndex((tab) => tab.id === sourceTabId);
+      const targetIndex = state.tabs.findIndex((tab) => tab.id === targetTabId);
+      if (sourceIndex === -1 || targetIndex === -1) {
+        return state;
+      }
+
+      const nextTabs = [...state.tabs];
+      const [movedTab] = nextTabs.splice(sourceIndex, 1);
+      nextTabs.splice(targetIndex, 0, movedTab);
+
+      return { tabs: nextTabs };
+    });
   },
 }));

@@ -9,7 +9,7 @@ interface AppLayoutProps {
 
 export function AppLayout({ toolbar, sidebar, main, inspector }: AppLayoutProps) {
   const MIN_SIDEBAR_WIDTH = 208;
-  const DEFAULT_SIDEBAR_WIDTH = 256;
+  const DEFAULT_SIDEBAR_WIDTH = 288;
   const MAX_SIDEBAR_WIDTH_RATIO = 0.55;
   const MIN_INSPECTOR_WIDTH = 256;
   const DEFAULT_INSPECTOR_WIDTH = 320;
