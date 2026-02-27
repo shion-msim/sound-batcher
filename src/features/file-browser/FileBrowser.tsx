@@ -14,6 +14,8 @@ import { ContextMenu } from '../context-menu/ContextMenu';
 import { useContextMenu } from '../context-menu/useContextMenu';
 import type { ContextMenuCommandId, ContextMenuItem } from '../context-menu/context-menu.types';
 
+const MAX_VISIBLE_COLUMNS = 2;
+
 type FileBrowserContextTarget =
   | { kind: 'fileRow'; path: string; selectedCount: number; inSelection: boolean }
   | { kind: 'folderRow'; path: string; isPinned: boolean }
@@ -26,7 +28,7 @@ export function FileBrowser() {
   const {
     tabs, activeTabId,
     files, currentPath, isLoading, error,
-    init, loadFiles, goUp, navigateTo, goBack, goForward, history, futureHistory,
+    init, loadFiles, goUp, navigateTo, goForward, history, futureHistory,
     pinnedPaths, togglePin,
     selectedFiles, toggleSelection, setSelection,
     columnPathChain, directoryChildrenByPath, setColumnPathChain, loadDirectoryEntries,
@@ -97,6 +99,11 @@ export function FileBrowser() {
     [activeTabId, tabs],
   );
 
+  const canGoLocalBack = currentPath !== '' &&
+    !(columnPathChain.length === 0 || columnPathChain[0] !== currentPath) &&
+    columnPathChain.length > 1;
+  const canGoUpFromCurrentView = canGoLocalBack || currentPath !== '';
+
   const buildMenuItems = useCallback((target: FileBrowserContextTarget | null): ContextMenuItem[] => {
     if (!target) return [];
 
@@ -148,9 +155,9 @@ export function FileBrowser() {
 
     return [
       { id: 'browser.refresh', label: '更新', shortcutHint: 'F5' },
-      { id: 'browser.back', label: '戻る', enabled: history.length > 0, shortcutHint: 'Alt+←' },
+      { id: 'browser.back', label: '戻る', enabled: canGoLocalBack, shortcutHint: 'Alt+←' },
       { id: 'browser.forward', label: '進む', enabled: futureHistory.length > 0, shortcutHint: 'Alt+→' },
-      { id: 'browser.up', label: '一つ上へ', enabled: Boolean(target.currentPath), separatorBefore: true },
+      { id: 'browser.up', label: '一つ上へ', enabled: canGoUpFromCurrentView, separatorBefore: true },
       {
         id: 'browser.pinCurrentFolder',
         label: pinnedPaths.includes(currentPath) ? '現在フォルダのピンを解除' : '現在フォルダをピン留め',
@@ -164,7 +171,7 @@ export function FileBrowser() {
       },
       { id: 'tab.closeOthers', label: '他のタブを閉じる', enabled: tabs.length > 1 },
     ];
-  }, [activeTab, currentPath, futureHistory.length, history.length, pinnedPaths, t, tabs.length]);
+  }, [activeTab, canGoLocalBack, canGoUpFromCurrentView, currentPath, futureHistory.length, pinnedPaths, t, tabs.length]);
 
   const { menuState, menuItems, openMenu, closeMenu } = useContextMenu<FileBrowserContextTarget>({
     itemsBuilder: buildMenuItems,
@@ -306,6 +313,23 @@ export function FileBrowser() {
       });
     });
   }, [loadDirectoryEntries, normalizedColumnChain]);
+
+  const handleLocalBack = useCallback(() => {
+    if (normalizedColumnChain.length <= 1) return;
+    const nextChain = normalizedColumnChain.slice(0, -1);
+    const currentDirectoryPath = normalizedColumnChain[normalizedColumnChain.length - 1];
+    setColumnPathChain(nextChain);
+    setSelection([currentDirectoryPath]);
+    selectionAnchorRef.current = { path: currentDirectoryPath, columnIndex: nextChain.length - 1 };
+  }, [normalizedColumnChain, setColumnPathChain, setSelection]);
+
+  const handleGoUpFromCurrentView = useCallback(async () => {
+    if (canGoLocalBack) {
+      handleLocalBack();
+      return;
+    }
+    await goUp();
+  }, [canGoLocalBack, goUp, handleLocalBack]);
 
   useEffect(() => {
     return () => {
@@ -464,13 +488,13 @@ export function FileBrowser() {
         await refreshFileTree();
         break;
       case 'browser.back':
-        await goBack();
+        handleLocalBack();
         break;
       case 'browser.forward':
         await goForward();
         break;
       case 'browser.up':
-        await goUp();
+        await handleGoUpFromCurrentView();
         break;
       case 'browser.pinCurrentFolder':
         if (currentPath) await togglePin(currentPath);
@@ -507,9 +531,10 @@ export function FileBrowser() {
     closeOtherTabs,
     closeTab,
     currentPath,
-    goBack,
     goForward,
     goUp,
+    handleGoUpFromCurrentView,
+    handleLocalBack,
     menuState.target,
     navigateTo,
     openTab,
@@ -576,7 +601,7 @@ export function FileBrowser() {
 
       if (event.altKey && event.key === 'ArrowLeft') {
         event.preventDefault();
-        void goBack();
+        handleLocalBack();
         return;
       }
 
@@ -594,7 +619,7 @@ export function FileBrowser() {
         !event.shiftKey
       ) {
         event.preventDefault();
-        void goBack();
+        handleLocalBack();
       }
     };
 
@@ -602,33 +627,36 @@ export function FileBrowser() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [goBack, goForward]);
+  }, [goForward, handleLocalBack]);
 
   const columns = useMemo(() => {
     if (!currentPath) return [] as Array<{
       directoryPath: string;
       entries: FileEntry[];
       selectedPath: string | null;
+      chainIndex: number;
     }>;
 
-    const result: Array<{ directoryPath: string; entries: FileEntry[]; selectedPath: string | null }> = [
+    const fullColumns: Array<{ directoryPath: string; entries: FileEntry[]; selectedPath: string | null; chainIndex: number }> = [
       {
         directoryPath: currentPath,
         entries: files,
         selectedPath: normalizedColumnChain[1] ?? null,
+        chainIndex: 0,
       },
     ];
 
     for (let i = 1; i < normalizedColumnChain.length; i += 1) {
       const directoryPath = normalizedColumnChain[i];
-      result.push({
+      fullColumns.push({
         directoryPath,
         entries: directoryChildrenByPath[directoryPath] ?? [],
         selectedPath: normalizedColumnChain[i + 1] ?? null,
+        chainIndex: i,
       });
     }
 
-    return result;
+    return fullColumns.slice(-MAX_VISIBLE_COLUMNS);
   }, [currentPath, directoryChildrenByPath, files, normalizedColumnChain]);
 
   const handleFileClick = (
@@ -669,8 +697,9 @@ export function FileBrowser() {
       selectionAnchorRef.current = { path: file.path, columnIndex };
       if (file.isDirectory) {
         const baseChain = normalizedColumnChain.slice(0, columnIndex + 1);
+        const nextChain = [...baseChain, file.path];
         void loadDirectoryEntries(file.path).catch(() => {});
-        setColumnPathChain([...baseChain, file.path]);
+        setColumnPathChain(nextChain);
       }
       return;
     }
@@ -680,8 +709,9 @@ export function FileBrowser() {
 
     const baseChain = normalizedColumnChain.slice(0, columnIndex + 1);
     if (file.isDirectory) {
+      const nextChain = [...baseChain, file.path];
       void loadDirectoryEntries(file.path).catch(() => {});
-      setColumnPathChain([...baseChain, file.path]);
+      setColumnPathChain(nextChain);
       return;
     }
     setColumnPathChain(baseChain);
@@ -705,12 +735,12 @@ export function FileBrowser() {
     );
   }
 
-  const renderColumnEntry = (file: FileEntry, columnIndex: number, columnEntries: FileEntry[]) => {
+  const renderColumnEntry = (file: FileEntry, chainIndex: number, columnEntries: FileEntry[]) => {
     const isSelected = selectedFiles.includes(file.path);
     const isDropTargetDirectory = file.isDirectory && dropTargetDirectoryPath === file.path;
 
     return (
-      <li key={`${columnIndex}-${file.path}`}>
+      <li key={`${chainIndex}-${file.path}`}>
         <div
           data-directory-path={file.isDirectory ? file.path : undefined}
           className={`
@@ -730,7 +760,7 @@ export function FileBrowser() {
 
             // Keep single-click as selection-only, and avoid toggling on double-click.
             clickTimeoutRef.current = window.setTimeout(() => {
-              handleFileClick(file, event, columnIndex, columnEntries);
+              handleFileClick(file, event, chainIndex, columnEntries);
               clickTimeoutRef.current = null;
             }, 200);
           }}
@@ -754,7 +784,7 @@ export function FileBrowser() {
             const inSelection = selectedFiles.includes(file.path);
             if (!inSelection) {
               setSelection([file.path]);
-              selectionAnchorRef.current = { path: file.path, columnIndex };
+              selectionAnchorRef.current = { path: file.path, columnIndex: chainIndex };
             }
             openMenu(event, {
               kind: 'fileRow',
@@ -783,7 +813,7 @@ export function FileBrowser() {
         // Mouse side buttons: 3=Back, 4=Forward (browser-like navigation).
         if (event.button === 3) {
           event.preventDefault();
-          void goBack();
+          handleLocalBack();
           return;
         }
 
@@ -894,9 +924,9 @@ export function FileBrowser() {
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1 flex-1 min-w-0">
             <button
-              onClick={() => void goBack()}
+              onClick={handleLocalBack}
               className="inline-flex !h-7 !w-7 items-center justify-center !p-0 !border-0 !bg-transparent rounded text-gray-300 hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={history.length === 0}
+              disabled={!canGoLocalBack}
               title="戻る"
               aria-label="戻る"
             >
@@ -914,7 +944,10 @@ export function FileBrowser() {
             {currentPath !== '' && (
               <button
                 className="inline-flex items-center gap-1.5 py-1 px-2 hover:bg-gray-800 rounded cursor-pointer text-xs text-gray-400"
-                onClick={goUp}
+                onClick={() => {
+                  void handleGoUpFromCurrentView();
+                }}
+                disabled={!canGoUpFromCurrentView}
                 title="一つ上へ"
               >
                 <Folder className="w-3.5 h-3.5" />
@@ -946,7 +979,7 @@ export function FileBrowser() {
                 {column.directoryPath.split(/[\\/]/).pop() || column.directoryPath}
               </div>
               <ul className="min-h-0 flex-1 overflow-y-auto hover-scroll p-1 space-y-0.5">
-                {column.entries.map((file) => renderColumnEntry(file, columnIndex, column.entries))}
+                {column.entries.map((file) => renderColumnEntry(file, column.chainIndex, column.entries))}
               </ul>
             </section>
           ))}
