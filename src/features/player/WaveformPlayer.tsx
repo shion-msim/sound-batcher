@@ -49,7 +49,7 @@ export function WaveformPlayer() {
   return (
     <div className="w-full h-full overflow-y-auto bg-gray-950 p-4">
       {selectedAudioFiles.length > 0 ? (
-        <div className={`w-full mx-auto grid gap-4 ${selectedAudioFiles.length === 1 ? 'max-w-5xl grid-cols-1' : 'grid-cols-1'}`}>
+        <div className="w-full mx-auto grid gap-4 grid-cols-1">
           {selectedAudioFiles.map((filePath) => (
             <WaveformCard
               key={filePath}
@@ -98,21 +98,34 @@ function WaveformCard({
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
+  const [themeVersion, setThemeVersion] = useState(0);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => {
+      setThemeVersion((current) => current + 1);
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current || wavesurferRef.current) {
       return;
     }
 
+    const { waveColor, progressColor, cursorColor } = getWaveformThemeColors();
     const instance = WaveSurfer.create({
       container: containerRef.current,
-      waveColor: '#4a90e2',
-      progressColor: '#1e3a8a',
-      cursorColor: '#ffffff',
+      waveColor,
+      progressColor,
+      cursorColor,
       height: 120,
       normalize: true,
       // Fit long audio into available width instead of enabling horizontal scrolling.
       minPxPerSec: 0,
+      fillParent: true,
       hideScrollbar: true,
       interact: true,
     });
@@ -125,6 +138,16 @@ function WaveformCard({
   }, []);
 
   useEffect(() => {
+    const wavesurfer = wavesurferRef.current;
+    if (!wavesurfer) {
+      return;
+    }
+
+    const { waveColor, progressColor, cursorColor } = getWaveformThemeColors();
+    wavesurfer.setOptions({ waveColor, progressColor, cursorColor });
+  }, [themeVersion]);
+
+  useEffect(() => {
     const loadAudio = async () => {
       const wavesurfer = wavesurferRef.current;
       if (!wavesurfer) {
@@ -133,6 +156,7 @@ function WaveformCard({
 
       setIsLoading(true);
       setError(null);
+      setDurationSeconds(null);
       try {
         try {
           const url = convertFileSrc(filePath);
@@ -144,6 +168,8 @@ function WaveformCard({
           await wavesurfer.loadBlob(blob);
         }
         setIsLoading(false);
+        setDurationSeconds(wavesurfer.getDuration());
+        fitWaveformToContainer(wavesurfer, containerRef.current);
 
         if (isActive && isPlaying) {
           await wavesurfer.play();
@@ -156,6 +182,20 @@ function WaveformCard({
     };
     void loadAudio();
   }, [filePath, isActive, isPlaying]);
+
+  useEffect(() => {
+    const wavesurfer = wavesurferRef.current;
+    const container = containerRef.current;
+    if (!wavesurfer || !container) {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      fitWaveformToContainer(wavesurfer, container);
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const wavesurfer = wavesurferRef.current;
@@ -187,10 +227,25 @@ function WaveformCard({
     <section
       className={`rounded border p-3 ${isActive ? 'border-blue-500 bg-blue-950/20' : 'border-gray-800 bg-gray-900/40'}`}
     >
-      <div className="mb-2 text-xs text-gray-400 truncate" title={filePath}>
-        {filePath}
+      <div className="mb-2 flex items-center justify-between gap-3 text-xs text-gray-400">
+        <span className="truncate" title={filePath}>
+          {filePath}
+        </span>
+        <span className="shrink-0 font-mono tabular-nums">
+          {formatDuration(durationSeconds)}
+        </span>
       </div>
-      <div ref={containerRef} className={`w-full ${isLoading ? 'opacity-40' : 'opacity-100'}`} />
+      <div className="relative">
+        <div
+          ref={containerRef}
+          className={`w-full h-[120px] transition-opacity ${isLoading ? 'opacity-40' : 'opacity-100'}`}
+        />
+        {isLoading && !error && (
+          <div className="pointer-events-none absolute inset-0 rounded bg-gray-900/70 p-2">
+            <WaveformLoadingSkeleton />
+          </div>
+        )}
+      </div>
       {error && <div className="mt-2 text-xs text-red-400">{error}</div>}
       <div className="mt-3">
         <button
@@ -208,6 +263,47 @@ function WaveformCard({
       </div>
     </section>
   );
+}
+
+const LOADING_WAVE_BARS = [
+  24, 42, 34, 58, 46, 68, 40, 52, 30, 62, 44, 56, 36, 66, 38, 50, 28, 60, 42, 54, 32, 64, 40, 48,
+  30, 58, 44, 52, 34, 62, 38, 54, 28, 60, 40, 56,
+];
+
+function WaveformLoadingSkeleton() {
+  return (
+    <div className="flex h-full items-center justify-center gap-1 overflow-hidden">
+      {LOADING_WAVE_BARS.map((height, index) => (
+        <span
+          key={`${height}-${index}`}
+          className="w-1.5 rounded-full bg-blue-300/70 animate-pulse"
+          style={{
+            height: `${height}%`,
+            animationDelay: `${index * 45}ms`,
+            animationDuration: '1300ms',
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function formatDuration(seconds: number | null): string {
+  if (!Number.isFinite(seconds) || seconds === null || seconds < 0) {
+    return '--:--.---';
+  }
+
+  const totalMilliseconds = Math.floor(seconds * 1000);
+  const totalSeconds = Math.floor(totalMilliseconds / 1000);
+  const milliseconds = totalMilliseconds % 1000;
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
 }
 
 const AUDIO_EXTENSIONS = new Set([
@@ -264,3 +360,31 @@ const mimeTypeFromPath = (path: string): string => {
       return 'audio/*';
   }
 };
+
+function getWaveformThemeColors(): { waveColor: string; progressColor: string; cursorColor: string } {
+  const styles = window.getComputedStyle(document.documentElement);
+  return {
+    waveColor: styles.getPropertyValue('--color-wave').trim() || '#60a5fa',
+    progressColor: styles.getPropertyValue('--color-wave-progress').trim() || '#2563eb',
+    cursorColor: styles.getPropertyValue('--color-wave-cursor').trim() || '#f3f4f6',
+  };
+}
+
+function fitWaveformToContainer(wavesurfer: WaveSurfer, container: HTMLElement | null): void {
+  if (!container) {
+    return;
+  }
+  const duration = wavesurfer.getDuration();
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return;
+  }
+  const width = container.clientWidth;
+  if (!Number.isFinite(width) || width <= 0) {
+    return;
+  }
+  const minPxPerSec = width / duration;
+  wavesurfer.setOptions({
+    minPxPerSec,
+    hideScrollbar: true,
+  });
+}

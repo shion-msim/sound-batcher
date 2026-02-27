@@ -6,7 +6,7 @@ export interface BatchJob {
   timestamp: number;
   inputFiles: string[];
   status: 'completed' | 'failed' | 'partial' | 'processing';
-  results: { file: string; status: string; error?: string }[];
+  results: { file: string; status: string; error?: string; outputPath?: string }[];
 }
 
 interface HistoryState {

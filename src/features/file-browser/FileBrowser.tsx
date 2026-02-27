@@ -6,21 +6,43 @@ import { Folder, Music, Pin, PinOff, ArrowUpLeft } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { FileEntry } from './file-browser.types';
 import { isVisibleInFileBrowser } from './file-browser.utils';
-import { readDir } from '@tauri-apps/plugin-fs';
-import { join } from '@tauri-apps/api/path';
+import { readDir, rename } from '@tauri-apps/plugin-fs';
+import { basename, dirname, join } from '@tauri-apps/api/path';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+
+const areFileEntriesEqual = (a: FileEntry[] | undefined, b: FileEntry[]): boolean => {
+  if (!a) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (
+      a[i].path !== b[i].path ||
+      a[i].name !== b[i].name ||
+      a[i].isDirectory !== b[i].isDirectory
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
 
 export function FileBrowser() {
   const { t } = useTranslation();
   const {
     files, currentPath, isLoading, error,
-    init, goUp, navigateTo, goBack, goForward, history, futureHistory,
+    init, loadFiles, goUp, navigateTo, goBack, goForward, history, futureHistory,
     pinnedPaths, togglePin, expandedPaths, toggleDirectoryExpanded,
     selectedFiles, toggleSelection, setSelection
   } = useFileBrowserStore();
   const { play } = usePlayerStore();
   const [childrenByPath, setChildrenByPath] = useState<Record<string, FileEntry[]>>({});
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
+  const [isDropTargetActive, setIsDropTargetActive] = useState(false);
+  const [dropTargetDirectoryPath, setDropTargetDirectoryPath] = useState<string | null>(null);
+  const [dragPreview, setDragPreview] = useState<{ x: number; y: number; count: number } | null>(null);
+  const [internalDraggedPaths, setInternalDraggedPaths] = useState<string[] | null>(null);
   const clickTimeoutRef = useRef<number | null>(null);
+  const pendingInternalDragRef = useRef<{ paths: string[]; startX: number; startY: number } | null>(null);
+  const suppressClickRef = useRef(false);
 
   useEffect(() => {
     void init();
@@ -39,14 +61,119 @@ export function FileBrowser() {
     }
   };
 
-  const loadChildren = useCallback(async (path: string) => {
-    if (childrenByPath[path]) return;
+  const handleDroppedPaths = useCallback(async (paths: string[]) => {
+    if (paths.length === 0) return;
 
-    setLoadingDirs((prev) => {
-      const next = new Set(prev);
-      next.add(path);
-      return next;
+    const droppedDirectories: string[] = [];
+    const droppedFiles: string[] = [];
+
+    await Promise.all(
+      paths.map(async (path) => {
+        try {
+          await readDir(path);
+          droppedDirectories.push(path);
+        } catch {
+          droppedFiles.push(path);
+        }
+      }),
+    );
+
+    if (droppedDirectories.length > 0) {
+      await navigateTo(droppedDirectories[0]);
+      return;
+    }
+
+    if (droppedFiles.length === 0) {
+      return;
+    }
+
+    const audioFiles = droppedFiles.filter((path) => {
+      const fileName = path.split(/[\\/]/).pop() ?? '';
+      return isVisibleInFileBrowser(fileName, false);
     });
+
+    if (audioFiles.length === 0) {
+      return;
+    }
+
+    const parentPath = await dirname(audioFiles[0]);
+    const normalizeForCompare = (path: string) => path.replace(/[\\/]+/g, '/').toLowerCase();
+    const normalizedParent = normalizeForCompare(parentPath);
+    await navigateTo(parentPath);
+    const selectionInParent = audioFiles.filter((path) => {
+      const normalizedPath = normalizeForCompare(path);
+      return normalizedPath.startsWith(`${normalizedParent}/`);
+    });
+    setSelection(selectionInParent.length > 0 ? selectionInParent : [audioFiles[0]]);
+    selectionAnchorRef.current = audioFiles[0];
+  }, [navigateTo, setSelection]);
+
+  const moveFilesToDirectory = useCallback(async (paths: string[], targetDirectoryPath: string) => {
+    if (paths.length === 0) return;
+
+    const normalizeForCompare = (path: string) => path.replace(/[\\/]+/g, '/').toLowerCase();
+    const normalizedTargetPath = normalizeForCompare(targetDirectoryPath);
+
+    const movedDestinationPaths: string[] = [];
+    for (const sourcePath of paths) {
+      const sourceName = sourcePath.split(/[\\/]/).pop() ?? '';
+      if (!isVisibleInFileBrowser(sourceName, false)) {
+        continue;
+      }
+
+      const parentPath = await dirname(sourcePath);
+      if (normalizeForCompare(parentPath) === normalizedTargetPath) {
+        continue;
+      }
+
+      try {
+        const fileName = await basename(sourcePath);
+        const destinationPath = await join(targetDirectoryPath, fileName);
+        await rename(sourcePath, destinationPath);
+        movedDestinationPaths.push(destinationPath);
+      } catch (moveError) {
+        console.error(`Failed to move file: ${sourcePath}`, moveError);
+      }
+    }
+
+    if (movedDestinationPaths.length === 0) {
+      return;
+    }
+
+    await navigateTo(targetDirectoryPath);
+    setSelection(movedDestinationPaths);
+    selectionAnchorRef.current = movedDestinationPaths[0];
+  }, [navigateTo, setSelection]);
+
+  const getDirectoryPathFromPoint = useCallback((x: number, y: number): string | null => {
+    const element = document.elementFromPoint(x, y) as HTMLElement | null;
+    const dropTargetElement = element?.closest<HTMLElement>('[data-directory-path]');
+    return dropTargetElement?.dataset.directoryPath ?? null;
+  }, []);
+
+  const startPendingInternalDrag = useCallback((file: FileEntry, event: MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || file.isDirectory) return;
+    const pathsToDrag = selectedFiles.includes(file.path) ? selectedFiles : [file.path];
+    pendingInternalDragRef.current = {
+      paths: pathsToDrag,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+  }, [selectedFiles]);
+
+  const loadChildren = useCallback(async (path: string, force = false) => {
+    const hasCachedChildren = Boolean(childrenByPath[path]);
+    if (!force && hasCachedChildren) return;
+
+    // Keep already-rendered children visible during background refreshes.
+    const shouldTrackLoading = !(force && hasCachedChildren);
+    if (shouldTrackLoading) {
+      setLoadingDirs((prev) => {
+        const next = new Set(prev);
+        next.add(path);
+        return next;
+      });
+    }
 
     try {
       const entries = await readDir(path);
@@ -66,15 +193,22 @@ export function FileBrowser() {
         return a.isDirectory ? -1 : 1;
       });
 
-      setChildrenByPath((prev) => ({ ...prev, [path]: visibleChildFiles }));
+      setChildrenByPath((prev) => {
+        if (areFileEntriesEqual(prev[path], visibleChildFiles)) {
+          return prev;
+        }
+        return { ...prev, [path]: visibleChildFiles };
+      });
     } catch (childError) {
       console.error('Failed to read child dir', childError);
     } finally {
-      setLoadingDirs((prev) => {
-        const next = new Set(prev);
-        next.delete(path);
-        return next;
-      });
+      if (shouldTrackLoading) {
+        setLoadingDirs((prev) => {
+          const next = new Set(prev);
+          next.delete(path);
+          return next;
+        });
+      }
     }
   }, [childrenByPath]);
 
@@ -125,6 +259,147 @@ export function FileBrowser() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    void getCurrentWindow()
+      .onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === 'enter' || payload.type === 'over') {
+          setIsDropTargetActive(true);
+          return;
+        }
+        if (payload.type === 'leave') {
+          setIsDropTargetActive(false);
+          return;
+        }
+        if (payload.type === 'drop') {
+          setIsDropTargetActive(false);
+          void handleDroppedPaths(payload.paths);
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [handleDroppedPaths]);
+
+  useEffect(() => {
+    const handleMouseMove = (event: globalThis.MouseEvent) => {
+      const pending = pendingInternalDragRef.current;
+      if (!pending && !internalDraggedPaths) return;
+
+      if (!internalDraggedPaths && pending) {
+        const movedX = Math.abs(event.clientX - pending.startX);
+        const movedY = Math.abs(event.clientY - pending.startY);
+        if (movedX < 4 && movedY < 4) {
+          return;
+        }
+        suppressClickRef.current = true;
+        setInternalDraggedPaths(pending.paths);
+      }
+
+      const activePaths = internalDraggedPaths ?? pending?.paths ?? [];
+      if (activePaths.length === 0) return;
+
+      const directoryPath = getDirectoryPathFromPoint(event.clientX, event.clientY);
+      setDropTargetDirectoryPath(directoryPath);
+      setDragPreview({ x: event.clientX, y: event.clientY, count: activePaths.length });
+    };
+
+    const handleMouseUp = () => {
+      const droppedPaths = internalDraggedPaths;
+      const targetDirectoryPath = dropTargetDirectoryPath;
+
+      pendingInternalDragRef.current = null;
+      setDragPreview(null);
+      setInternalDraggedPaths(null);
+      setDropTargetDirectoryPath(null);
+
+      if (droppedPaths && targetDirectoryPath) {
+        void moveFilesToDirectory(droppedPaths, targetDirectoryPath);
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [dropTargetDirectoryPath, getDirectoryPathFromPoint, internalDraggedPaths, moveFilesToDirectory]);
+
+  const expandedVisiblePaths = useMemo(() => {
+    const paths: string[] = [];
+
+    const walkExpanded = (entries: FileEntry[]) => {
+      for (const entry of entries) {
+        if (!entry.isDirectory) continue;
+        if (!expandedPaths.includes(entry.path)) continue;
+        paths.push(entry.path);
+        const children = childrenByPath[entry.path];
+        if (children) {
+          walkExpanded(children);
+        }
+      }
+    };
+
+    walkExpanded(files);
+    return paths;
+  }, [childrenByPath, expandedPaths, files]);
+
+  const refreshFileTree = useCallback(async () => {
+    if (!currentPath) return;
+
+    await loadFiles(currentPath, { preserveSelection: true, silent: true });
+    await Promise.all(expandedVisiblePaths.map((path) => loadChildren(path, true)));
+  }, [currentPath, expandedVisiblePaths, loadChildren, loadFiles]);
+
+  useEffect(() => {
+    if (!currentPath) return;
+
+    let isRefreshing = false;
+
+    const runRefresh = async () => {
+      if (isRefreshing) return;
+      isRefreshing = true;
+      try {
+        await refreshFileTree();
+      } finally {
+        isRefreshing = false;
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void runRefresh();
+    }, 5000);
+
+    const handleFocus = () => {
+      void runRefresh();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void runRefresh();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentPath, refreshFileTree]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -247,16 +522,24 @@ export function FileBrowser() {
     const isExpanded = expandedPaths.includes(file.path);
     const children = childrenByPath[file.path] ?? [];
     const isChildLoading = loadingDirs.has(file.path);
+    const isDropTargetDirectory = file.isDirectory && dropTargetDirectoryPath === file.path;
 
     return (
       <li key={file.path}>
         <div
+          data-directory-path={file.isDirectory ? file.path : undefined}
           className={`
             flex items-center gap-1.5 py-0.5 pr-1 rounded cursor-pointer text-sm select-none
             ${isSelected ? 'file-row-selected bg-blue-900/25 text-blue-100' : 'hover:bg-gray-800 text-gray-300'}
+            ${isDropTargetDirectory ? 'ring-1 ring-blue-500 bg-blue-900/20' : ''}
           `}
           style={{ paddingLeft: `${4 + depth * 20}px` }}
+          onMouseDown={(event) => startPendingInternalDrag(file, event)}
           onClick={(event) => {
+            if (suppressClickRef.current) {
+              suppressClickRef.current = false;
+              return;
+            }
             if (clickTimeoutRef.current !== null) {
               window.clearTimeout(clickTimeoutRef.current);
             }
@@ -301,8 +584,10 @@ export function FileBrowser() {
 
         {file.isDirectory && isExpanded && (
           <ul className="space-y-0.5">
-            {isChildLoading && <li className="text-xs text-gray-500 pl-8">{t('fileBrowser.loading')}</li>}
-            {!isChildLoading && children.map((child) => renderEntry(child, depth + 1))}
+            {isChildLoading && children.length === 0 && (
+              <li className="text-xs text-gray-500 pl-8">{t('fileBrowser.loading')}</li>
+            )}
+            {children.map((child) => renderEntry(child, depth + 1))}
           </ul>
         )}
       </li>
@@ -311,7 +596,7 @@ export function FileBrowser() {
 
   return (
     <div
-      className="h-full overflow-hidden p-2 flex flex-col"
+      className="h-full overflow-hidden p-2 flex flex-col relative"
       onMouseUp={(event) => {
         // Mouse side buttons: 3=Back, 4=Forward (browser-like navigation).
         if (event.button === 3) {
@@ -326,6 +611,21 @@ export function FileBrowser() {
         }
       }}
     >
+      {isDropTargetActive && (
+        <div className="absolute inset-2 z-10 pointer-events-none rounded border-2 border-dashed border-blue-500 bg-blue-500/10 flex items-center justify-center">
+          <span className="text-sm font-medium text-blue-200">
+            ここにドロップして開く
+          </span>
+        </div>
+      )}
+      {dragPreview && (
+        <div
+          className="absolute z-20 pointer-events-none rounded border border-blue-500 bg-gray-950/90 px-2 py-1 text-xs text-blue-200"
+          style={{ left: `${dragPreview.x + 12}px`, top: `${dragPreview.y + 12}px` }}
+        >
+          {dragPreview.count} 件を移動
+        </div>
+      )}
       {/* Top fixed controls */}
       <div className="shrink-0 mb-2 space-y-1.5 border-b border-gray-800 pb-2">
         <div className="flex items-center justify-between gap-2">

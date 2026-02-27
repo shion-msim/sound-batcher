@@ -20,7 +20,7 @@ export function ProcessorPanel() {
   const hasSelection = selectedFiles.length > 0;
 
   return (
-    <div className="flex flex-col h-full bg-gray-900 text-white p-4">
+    <div className="flex flex-col h-full bg-gray-900 text-gray-100 p-4">
       <h2 className="text-lg font-bold mb-4">{t('processor.title')}</h2>
 
       <div className="mb-4 space-y-2">
@@ -99,7 +99,7 @@ export function ProcessorPanel() {
         disabled={isProcessing || queue.length === 0}
         className={`
           w-full py-2 rounded font-bold text-sm
-          ${isProcessing ? 'bg-gray-700 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500'}
+          ${isProcessing ? 'bg-gray-700 text-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white'}
         `}
       >
         {isProcessing ? t('processor.processing') : t('processor.startProcessing')}

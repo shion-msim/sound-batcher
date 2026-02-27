@@ -33,6 +33,7 @@ interface ProcessTaskExecutionResult {
   status: TaskStatus;
   error?: string;
   progress?: string;
+  outputPath?: string;
 }
 
 export async function executeTask(
@@ -49,7 +50,7 @@ export async function executeTask(
 
     if (settings.renameOnly) {
       await deps.copyFile(task.file, outputPath);
-      return { status: 'completed' };
+      return { status: 'completed', outputPath };
     }
 
     const builder = deps.createCommandBuilder();
@@ -63,7 +64,7 @@ export async function executeTask(
     builder.output(outputPath);
 
     await deps.runFFmpeg(builder.build(), onProgress);
-    return { status: 'completed' };
+    return { status: 'completed', outputPath };
   } catch (error) {
     return { status: 'failed', error: String(error) };
   }

@@ -14,12 +14,14 @@ export interface ProcessTask {
   status: TaskStatus;
   error?: string;
   progress?: string;
+  outputPath?: string;
 }
 
 export interface ProcessTaskResult {
   file: string;
   status: TaskStatus;
   error?: string;
+  outputPath?: string;
 }
 
 export interface ProcessorSettingsSnapshot {

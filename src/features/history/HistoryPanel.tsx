@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { useHistoryStore } from './useHistoryStore';
 import { ChevronDown, ChevronRight, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useFileBrowserStore } from '../file-browser/useFileBrowserStore';
 
 export function HistoryPanel() {
   const { jobs, loadHistory, isLoading } = useHistoryStore();
+  const { navigateTo, setSelection } = useFileBrowserStore();
   const [expandedJobs, setExpandedJobs] = useState<string[]>([]);
   const [copiedErrorKey, setCopiedErrorKey] = useState<string | null>(null);
   const { t } = useTranslation();
@@ -33,10 +35,33 @@ export function HistoryPanel() {
     }
   };
 
-  if (isLoading) return <div className="p-4 text-white">{t('history.loading')}</div>;
+  const handleOpenFolderInFileBrowser = async (path: string) => {
+    try {
+      await navigateTo(path);
+      setSelection([]);
+    } catch (error) {
+      console.error('Failed to open folder in file browser', error);
+    }
+  };
+
+  const handleOpenFileInFileBrowser = async (filePath: string) => {
+    const parentDirectory = getParentDirectory(filePath);
+    if (!parentDirectory) {
+      return;
+    }
+
+    try {
+      await navigateTo(parentDirectory);
+      setSelection([filePath]);
+    } catch (error) {
+      console.error('Failed to open file in file browser', error);
+    }
+  };
+
+  if (isLoading) return <div className="p-4 text-gray-100">{t('history.loading')}</div>;
 
   return (
-    <div className="h-full overflow-y-auto hover-scroll bg-gray-900 text-white p-4">
+    <div className="h-full overflow-y-auto hover-scroll bg-gray-900 text-gray-100 p-4">
       <h2 className="text-lg font-bold mb-4">{t('history.title')}</h2>
       
       {jobs.length === 0 ? (
@@ -46,7 +71,7 @@ export function HistoryPanel() {
           {jobs.map(job => (
             <div key={job.id} className="bg-gray-800 rounded overflow-hidden">
               <div 
-                className="p-3 flex items-center cursor-pointer hover:bg-gray-750"
+                className="p-3 flex items-center cursor-pointer hover:bg-gray-700"
                 onClick={() => toggleExpand(job.id)}
               >
                 <div className="mr-2">
@@ -72,9 +97,51 @@ export function HistoryPanel() {
                     {job.results.map((result, idx) => (
                       <li key={idx} className="flex items-center gap-2 text-xs p-1 hover:bg-gray-800 rounded">
                         <StatusIcon status={result.status} />
-                        <span className="truncate flex-1" title={result.file}>
-                          {result.file.split(/[\\/]/).pop()}
-                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate" title={result.file}>
+                            {result.file.split(/[\\/]/).pop()}
+                          </div>
+                          {result.outputPath && (
+                            <div className="truncate text-[10px] text-gray-400" title={result.outputPath}>
+                              {result.outputPath.split(/[\\/]/).pop()}
+                            </div>
+                          )}
+                        </div>
+                        {(() => {
+                          const outputPath = result.outputPath;
+                          if (!outputPath) {
+                            return null;
+                          }
+                          return (
+                          <>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const outputFolder = getParentDirectory(outputPath);
+                                if (outputFolder) {
+                                  void handleOpenFolderInFileBrowser(outputFolder);
+                                }
+                              }}
+                              className="text-[10px] px-1.5 py-0.5 rounded border border-gray-600 text-gray-300 hover:bg-gray-700"
+                              title={t('history.openOutputFolder', { defaultValue: 'Open output folder' })}
+                            >
+                              {t('history.openFolder', { defaultValue: 'Folder' })}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleOpenFileInFileBrowser(outputPath);
+                              }}
+                              className="text-[10px] px-1.5 py-0.5 rounded border border-gray-600 text-gray-300 hover:bg-gray-700"
+                              title={t('history.openOutputFile', { defaultValue: 'Open output file' })}
+                            >
+                              {t('history.openFile', { defaultValue: 'File' })}
+                            </button>
+                          </>
+                          );
+                        })()}
                         {result.error && (
                           <>
                             <span className="text-red-400 text-[10px] truncate max-w-[160px]" title={result.error}>
@@ -114,6 +181,14 @@ export function HistoryPanel() {
 function extractErrorCode(error: string): string | null {
   const match = error.match(/code\s+(-?\d+)/i);
   return match?.[1] ?? null;
+}
+
+function getParentDirectory(path: string): string | null {
+  const lastSlashIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  if (lastSlashIndex <= 0) {
+    return null;
+  }
+  return path.slice(0, lastSlashIndex);
 }
 
 function StatusBadge({ status }: { status: string }) {

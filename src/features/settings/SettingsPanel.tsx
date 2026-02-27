@@ -216,7 +216,7 @@ export function SettingsPanel({ visibleSections, showSectionHeaders = true }: Se
                     key={themeOption}
                     onClick={() => settings.setTheme(themeOption)}
                     className={`flex-1 flex items-center justify-center py-1 rounded text-xs gap-1 ${
-                      settings.theme === themeOption ? 'bg-gray-600 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'
+                      settings.theme === themeOption ? 'bg-gray-600 text-gray-100 shadow-sm' : 'text-gray-400 hover:text-gray-200'
                     }`}
                   >
                     {themeOption === 'light' && <Sun size={12} />}

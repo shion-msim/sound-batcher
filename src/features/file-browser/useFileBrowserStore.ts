@@ -5,6 +5,20 @@ import { FileEntry } from './file-browser.types';
 import { isVisibleInFileBrowser } from './file-browser.utils';
 import { settingsStore } from '../../lib/store';
 
+const areFileEntriesEqual = (a: FileEntry[], b: FileEntry[]): boolean => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (
+      a[i].path !== b[i].path ||
+      a[i].name !== b[i].name ||
+      a[i].isDirectory !== b[i].isDirectory
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
 interface FileBrowserState {
   currentPath: string;
   files: FileEntry[];
@@ -16,7 +30,13 @@ interface FileBrowserState {
   pinnedPaths: string[];
   selectedFiles: string[];
   setCurrentPath: (path: string) => void;
-  loadFiles: (path: string) => Promise<void>;
+  loadFiles: (
+    path: string,
+    options?: {
+      preserveSelection?: boolean;
+      silent?: boolean;
+    }
+  ) => Promise<void>;
   navigateTo: (path: string) => Promise<void>;
   goBack: () => Promise<void>;
   goForward: () => Promise<void>;
@@ -40,8 +60,20 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
   pinnedPaths: [],
   selectedFiles: [],
   setCurrentPath: (path) => set({ currentPath: path }),
-  loadFiles: async (path) => {
-    set({ isLoading: true, error: null, selectedFiles: [] }); // Clear selection on navigate
+  loadFiles: async (path, options) => {
+    const preserveSelection = options?.preserveSelection ?? false;
+    const silent = options?.silent ?? false;
+
+    if (silent) {
+      set({ error: null });
+    } else {
+      set((state) => ({
+        isLoading: true,
+        error: null,
+        selectedFiles: preserveSelection ? state.selectedFiles : [],
+      }));
+    }
+
     try {
       const entries = await readDir(path);
       const files: FileEntry[] = await Promise.all(entries.map(async (entry) => ({
@@ -58,12 +90,29 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
         return a.isDirectory ? -1 : 1;
       });
       
-      set({ files: visibleFiles, currentPath: path });
+      set((state) => {
+        const nextSelectedFiles = preserveSelection ? state.selectedFiles : [];
+        const isFileListChanged = !areFileEntriesEqual(state.files, visibleFiles);
+        const isPathChanged = state.currentPath !== path;
+        const isSelectionChanged = state.selectedFiles !== nextSelectedFiles;
+
+        if (!isFileListChanged && !isPathChanged && !isSelectionChanged) {
+          return state;
+        }
+
+        return {
+          files: isFileListChanged ? visibleFiles : state.files,
+          currentPath: isPathChanged ? path : state.currentPath,
+          selectedFiles: nextSelectedFiles,
+        };
+      });
     } catch (error) {
       console.error('Failed to read dir', error);
       set({ error: error instanceof Error ? error.message : String(error) });
     } finally {
-      set({ isLoading: false });
+      if (!silent) {
+        set({ isLoading: false });
+      }
     }
   },
   navigateTo: async (path) => {

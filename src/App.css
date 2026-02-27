@@ -45,6 +45,9 @@ body {
   --color-gray-300: #1f2937;
   --color-gray-200: #111827;
   --color-gray-100: #0f172a;
+  --color-wave: #3b82f6;
+  --color-wave-progress: #1d4ed8;
+  --color-wave-cursor: #0f172a;
 }
 
 :root.dark {
@@ -59,6 +62,9 @@ body {
   --color-gray-300: #d1d5db;
   --color-gray-200: #e5e7eb;
   --color-gray-100: #f3f4f6;
+  --color-wave: #60a5fa;
+  --color-wave-progress: #2563eb;
+  --color-wave-cursor: #f3f4f6;
 }
 
 .file-row-selected {

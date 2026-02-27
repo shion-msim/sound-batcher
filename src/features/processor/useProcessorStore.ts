@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { FFmpegCommandBuilder, runFFmpeg } from '../../lib/ffmpeg';
 import { basename, dirname, extname, join } from '@tauri-apps/api/path';
 import { copyFile, exists, mkdir } from '@tauri-apps/plugin-fs';
+import { useFileBrowserStore } from '../file-browser/useFileBrowserStore';
 import { useHistoryStore } from '../history/useHistoryStore';
 import { useSettingsStore } from '../settings/useSettingsStore';
 import { executeTask, runWithConcurrency } from './processor.core';
@@ -69,6 +70,7 @@ export const useProcessorStore = create<ProcessorState>((set, get) => ({
           status: result.status,
           error: result.error,
           progress: result.progress,
+          outputPath: result.outputPath,
         }),
       }));
     });
@@ -79,9 +81,19 @@ export const useProcessorStore = create<ProcessorState>((set, get) => ({
       file: task.file,
       status: task.status,
       error: task.error,
+      outputPath: task.outputPath,
     }));
 
     await history.updateJob(jobId, { status: finalStatus, results });
+
+    const fileBrowser = useFileBrowserStore.getState();
+    if (fileBrowser.currentPath) {
+      await fileBrowser.loadFiles(fileBrowser.currentPath, {
+        preserveSelection: true,
+        silent: true,
+      });
+    }
+
     set({ isProcessing: false });
   },
 }));
