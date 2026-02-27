@@ -1,11 +1,10 @@
 import { useState, type ReactNode } from 'react';
-import { Layers, History, Settings } from 'lucide-react';
+import { Layers, History } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ProcessorPanel } from '../processor/ProcessorPanel';
 import { HistoryPanel } from '../history/HistoryPanel';
-import { SettingsPanel } from '../settings/SettingsPanel';
 
-type InspectorTab = 'processor' | 'history' | 'settings';
+type InspectorTab = 'processor' | 'history';
 
 export function InspectorPanel() {
   const [activeTab, setActiveTab] = useState<InspectorTab>('processor');
@@ -26,12 +25,6 @@ export function InspectorPanel() {
           isActive={activeTab === 'history'}
           onClick={() => setActiveTab('history')}
         />
-        <TabButton
-          label={t('tabs.settings')}
-          icon={<Settings size={14} />}
-          isActive={activeTab === 'settings'}
-          onClick={() => setActiveTab('settings')}
-        />
       </div>
 
       <div className="flex-1 overflow-hidden relative">
@@ -40,9 +33,6 @@ export function InspectorPanel() {
         </div>
         <div className={`absolute inset-0 ${activeTab === 'history' ? 'block' : 'hidden'}`}>
           <HistoryPanel />
-        </div>
-        <div className={`absolute inset-0 ${activeTab === 'settings' ? 'block' : 'hidden'}`}>
-          <SettingsPanel />
         </div>
       </div>
     </div>

@@ -3,7 +3,7 @@ import { LanguageCode } from './languages';
 export const resources: Record<LanguageCode, { translation: Record<string, unknown> }> = {
   ja: {
     translation: {
-      tabs: { processor: '処理', history: '履歴', settings: '設定' },
+      tabs: { processor: '処理', history: '履歴', manual: 'マニュアル', settings: '設定' },
       common: { status: { pending: '待機中', processing: '処理中', completed: '完了', failed: '失敗', partial: '一部完了' } },
       history: {
         loading: '履歴を読み込み中...',
@@ -17,6 +17,9 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
         addSelected: '選択を追加 ({{count}})',
         clear: 'クリア',
         queueEmpty: 'キューは空です',
+        modeLabel: '実行モード',
+        modeProcess: '波形処理を実行',
+        modeRenameOnly: 'リネームのみ実行',
         startProcessing: '処理開始',
         processing: '処理中...',
       },
@@ -44,6 +47,7 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
         renameOverwrite: 'リネーム（連番を付与）',
         overwrite: '上書き',
         skip: 'スキップ',
+        renameOnly: 'リネームのみ実行（音声処理なし）',
         outputFormat: '出力フォーマット',
         wavQuality: 'WAV（元の品質）',
         loudnessNormalization: 'ラウドネス正規化',
@@ -78,7 +82,7 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
   },
   en: {
     translation: {
-      tabs: { processor: 'Proc', history: 'Hist', settings: 'Set' },
+      tabs: { processor: 'Proc', history: 'Hist', manual: 'Manual', settings: 'Settings' },
       common: { status: { pending: 'pending', processing: 'processing', completed: 'completed', failed: 'failed', partial: 'partial' } },
       history: {
         loading: 'Loading history...',
@@ -92,6 +96,9 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
         addSelected: 'Add Selected ({{count}})',
         clear: 'Clear',
         queueEmpty: 'Queue is empty',
+        modeLabel: 'Execution Mode',
+        modeProcess: 'Run audio processing',
+        modeRenameOnly: 'Run rename only',
         startProcessing: 'Start Processing',
         processing: 'Processing...',
       },
@@ -119,6 +126,7 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
         renameOverwrite: 'Rename (append number)',
         overwrite: 'Overwrite',
         skip: 'Skip',
+        renameOnly: 'Run rename only (no audio processing)',
         outputFormat: 'Output Format',
         wavQuality: 'WAV (Original Quality)',
         loudnessNormalization: 'Loudness Normalization',
@@ -153,7 +161,7 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
   },
   ko: {
     translation: {
-      tabs: { processor: '처리', history: '기록', settings: '설정' },
+      tabs: { processor: '처리', history: '기록', manual: '매뉴얼', settings: '설정' },
       common: { status: { pending: '대기', processing: '처리 중', completed: '완료', failed: '실패', partial: '부분 완료' } },
       history: {
         loading: '기록 불러오는 중...',
@@ -228,7 +236,7 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
   },
   'zh-CN': {
     translation: {
-      tabs: { processor: '处理', history: '历史', settings: '设置' },
+      tabs: { processor: '处理', history: '历史', manual: '手册', settings: '设置' },
       common: { status: { pending: '等待中', processing: '处理中', completed: '完成', failed: '失败', partial: '部分完成' } },
       history: {
         loading: '正在加载历史记录...',
@@ -303,7 +311,7 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
   },
   'zh-TW': {
     translation: {
-      tabs: { processor: '處理', history: '歷史', settings: '設定' },
+      tabs: { processor: '處理', history: '歷史', manual: '手冊', settings: '設定' },
       common: { status: { pending: '等待中', processing: '處理中', completed: '完成', failed: '失敗', partial: '部分完成' } },
       history: {
         loading: '正在載入歷史紀錄...',
@@ -378,7 +386,7 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
   },
   fr: {
     translation: {
-      tabs: { processor: 'Trait.', history: 'Hist.', settings: 'Régl.' },
+      tabs: { processor: 'Trait.', history: 'Hist.', manual: 'Manuel', settings: 'Régl.' },
       common: { status: { pending: 'en attente', processing: 'en cours', completed: 'terminé', failed: 'échec', partial: 'partiel' } },
       history: {
         loading: 'Chargement de l’historique...',
@@ -453,7 +461,7 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
   },
   it: {
     translation: {
-      tabs: { processor: 'Proc.', history: 'Cron.', settings: 'Imp.' },
+      tabs: { processor: 'Proc.', history: 'Cron.', manual: 'Manuale', settings: 'Imp.' },
       common: { status: { pending: 'in attesa', processing: 'in elaborazione', completed: 'completato', failed: 'fallito', partial: 'parziale' } },
       history: {
         loading: 'Caricamento cronologia...',
@@ -528,7 +536,7 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
   },
   de: {
     translation: {
-      tabs: { processor: 'Verarb.', history: 'Verlauf', settings: 'Einst.' },
+      tabs: { processor: 'Verarb.', history: 'Verlauf', manual: 'Handbuch', settings: 'Einst.' },
       common: { status: { pending: 'wartend', processing: 'in Bearbeitung', completed: 'abgeschlossen', failed: 'fehlgeschlagen', partial: 'teilweise' } },
       history: {
         loading: 'Verlauf wird geladen...',
@@ -603,7 +611,7 @@ export const resources: Record<LanguageCode, { translation: Record<string, unkno
   },
   es: {
     translation: {
-      tabs: { processor: 'Proc.', history: 'Hist.', settings: 'Conf.' },
+      tabs: { processor: 'Proc.', history: 'Hist.', manual: 'Manual', settings: 'Conf.' },
       common: { status: { pending: 'pendiente', processing: 'procesando', completed: 'completado', failed: 'fallido', partial: 'parcial' } },
       history: {
         loading: 'Cargando historial...',

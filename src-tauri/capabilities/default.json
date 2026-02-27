@@ -7,8 +7,13 @@
     "core:default",
     "opener:default",
     "store:default",
+    "fs:read-all",
     {
       "identifier": "fs:allow-read",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-read-file",
       "allow": [{ "path": "**" }]
     },
     {
@@ -31,7 +36,18 @@
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "name": "ffmpeg",
+          "name": "bin/ffmpeg",
+          "cmd": "ffmpeg",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "bin/ffmpeg",
           "cmd": "ffmpeg",
           "sidecar": true,
           "args": true

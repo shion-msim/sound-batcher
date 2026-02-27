@@ -28,6 +28,7 @@ export interface ProcessorSettingsSnapshot {
   filenamePrefix: string;
   filenameSuffix: string;
   overwriteMode: OverwriteMode;
+  renameOnly: boolean;
   format: AudioFormat;
   loudness: LoudnessSettings;
   maxConcurrentJobs: number;

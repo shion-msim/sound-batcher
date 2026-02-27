@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 export function HistoryPanel() {
   const { jobs, loadHistory, isLoading } = useHistoryStore();
   const [expandedJobs, setExpandedJobs] = useState<string[]>([]);
+  const [copiedErrorKey, setCopiedErrorKey] = useState<string | null>(null);
   const { t } = useTranslation();
 
   useEffect(() => {
@@ -18,10 +19,24 @@ export function HistoryPanel() {
     );
   };
 
+  const handleCopyErrorCode = async (error: string, key: string) => {
+    const extractedCode = extractErrorCode(error);
+    const toCopy = extractedCode ?? error;
+    try {
+      await navigator.clipboard.writeText(toCopy);
+      setCopiedErrorKey(key);
+      window.setTimeout(() => {
+        setCopiedErrorKey((current) => (current === key ? null : current));
+      }, 1200);
+    } catch (copyError) {
+      console.error('Failed to copy error code', copyError);
+    }
+  };
+
   if (isLoading) return <div className="p-4 text-white">{t('history.loading')}</div>;
 
   return (
-    <div className="h-full overflow-y-auto bg-gray-900 text-white p-4">
+    <div className="h-full overflow-y-auto hover-scroll bg-gray-900 text-white p-4">
       <h2 className="text-lg font-bold mb-4">{t('history.title')}</h2>
       
       {jobs.length === 0 ? (
@@ -55,15 +70,30 @@ export function HistoryPanel() {
                 <div className="bg-gray-900 p-2 border-t border-gray-700">
                   <ul className="space-y-1">
                     {job.results.map((result, idx) => (
-                      <li key={idx} className="flex items-center text-xs p-1 hover:bg-gray-800 rounded">
+                      <li key={idx} className="flex items-center gap-2 text-xs p-1 hover:bg-gray-800 rounded">
                         <StatusIcon status={result.status} />
-                        <span className="ml-2 truncate flex-1" title={result.file}>
+                        <span className="truncate flex-1" title={result.file}>
                           {result.file.split(/[\\/]/).pop()}
                         </span>
                         {result.error && (
-                            <span className="text-red-400 ml-2 text-[10px] truncate max-w-[100px]" title={result.error}>
+                          <>
+                            <span className="text-red-400 text-[10px] truncate max-w-[160px]" title={result.error}>
                                 {result.error}
                             </span>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleCopyErrorCode(result.error as string, `${job.id}-${idx}`);
+                              }}
+                              className="text-[10px] px-1.5 py-0.5 rounded border border-gray-600 text-gray-300 hover:bg-gray-700"
+                              title={t('history.copyErrorCode', { defaultValue: 'Copy error code' })}
+                            >
+                              {copiedErrorKey === `${job.id}-${idx}`
+                                ? t('history.copied', { defaultValue: 'Copied' })
+                                : t('history.copyErrorCode', { defaultValue: 'Copy code' })}
+                            </button>
+                          </>
                         )}
                       </li>
                     ))}
@@ -79,6 +109,11 @@ export function HistoryPanel() {
       )}
     </div>
   );
+}
+
+function extractErrorCode(error: string): string | null {
+  const match = error.match(/code\s+(-?\d+)/i);
+  return match?.[1] ?? null;
 }
 
 function StatusBadge({ status }: { status: string }) {

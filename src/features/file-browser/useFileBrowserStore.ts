@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { readDir } from '@tauri-apps/plugin-fs';
 import { homeDir, join } from '@tauri-apps/api/path';
 import { FileEntry } from './file-browser.types';
+import { isVisibleInFileBrowser } from './file-browser.utils';
 import { settingsStore } from '../../lib/store';
 
 interface FileBrowserState {
@@ -24,6 +25,7 @@ interface FileBrowserState {
   togglePin: (path: string) => Promise<void>;
   toggleDirectoryExpanded: (path: string) => Promise<void>;
   toggleSelection: (path: string) => void;
+  setSelection: (paths: string[]) => void;
   clearSelection: () => void;
 }
 
@@ -47,13 +49,16 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
         path: await join(path, entry.name),
         isDirectory: entry.isDirectory,
       })));
+      const visibleFiles = files.filter((entry) =>
+        isVisibleInFileBrowser(entry.name, entry.isDirectory),
+      );
       
-      files.sort((a, b) => {
+      visibleFiles.sort((a, b) => {
         if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
         return a.isDirectory ? -1 : 1;
       });
       
-      set({ files, currentPath: path });
+      set({ files: visibleFiles, currentPath: path });
     } catch (error) {
       console.error('Failed to read dir', error);
       set({ error: error instanceof Error ? error.message : String(error) });
@@ -179,5 +184,6 @@ export const useFileBrowserStore = create<FileBrowserState>((set, get) => ({
       : [...selectedFiles, path];
     set({ selectedFiles: newSelected });
   },
+  setSelection: (paths) => set({ selectedFiles: paths }),
   clearSelection: () => set({ selectedFiles: [] }),
 }));

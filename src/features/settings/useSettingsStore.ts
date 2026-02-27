@@ -19,6 +19,7 @@ export const useSettingsStore = create<SettingsState>()(
       filenamePrefix: '',
       filenameSuffix: '_processed',
       overwriteMode: 'rename',
+      renameOnly: false,
 
       format: 'wav',
       loudness: DEFAULT_LOUDNESS,
@@ -34,6 +35,7 @@ export const useSettingsStore = create<SettingsState>()(
       setFilenamePrefix: (prefix) => set({ filenamePrefix: prefix }),
       setFilenameSuffix: (suffix) => set({ filenameSuffix: suffix }),
       setOverwriteMode: (mode) => set({ overwriteMode: mode }),
+      setRenameOnly: (enabled) => set({ renameOnly: enabled }),
 
       setFormat: (format) => set({ format }),
       setLoudnessSettings: (settings) =>
@@ -53,6 +55,7 @@ export const useSettingsStore = create<SettingsState>()(
           filenamePrefix: '',
           filenameSuffix: '_processed',
           overwriteMode: 'rename',
+          renameOnly: false,
           format: 'wav',
           loudness: DEFAULT_LOUDNESS,
           theme: 'system',

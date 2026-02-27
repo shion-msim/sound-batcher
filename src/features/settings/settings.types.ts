@@ -19,6 +19,7 @@ export interface SettingsState {
   filenamePrefix: string;
   filenameSuffix: string;
   overwriteMode: OverwriteMode;
+  renameOnly: boolean;
 
   // Audio Processing Settings
   format: AudioFormat;
@@ -36,6 +37,7 @@ export interface SettingsState {
   setFilenamePrefix: (prefix: string) => void;
   setFilenameSuffix: (suffix: string) => void;
   setOverwriteMode: (mode: OverwriteMode) => void;
+  setRenameOnly: (enabled: boolean) => void;
   
   setFormat: (format: AudioFormat) => void;
   setLoudnessSettings: (settings: Partial<LoudnessSettings>) => void;

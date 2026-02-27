@@ -55,19 +55,25 @@ export class FFmpegCommandBuilder {
 export function runFFmpeg(args: string[], onProgress?: (line: string) => void): Promise<void> {
     return new Promise(async (resolve, reject) => {
         try {
-            const command = Command.sidecar('ffmpeg', args);
+            const command = Command.sidecar('bin/ffmpeg', args);
+            const stderrLines: string[] = [];
             
             command.on('close', (data) => {
                 if (data.code === 0) {
                     resolve();
                 } else {
-                    reject(new Error(`FFmpeg exited with code ${data.code}`));
+                    const detail = stderrLines.slice(-5).join('\n').trim();
+                    const message = detail
+                      ? `FFmpeg exited with code ${data.code}\n${detail}`
+                      : `FFmpeg exited with code ${data.code}`;
+                    reject(new Error(message));
                 }
             });
             
             command.on('error', (error) => reject(error));
             
             command.stderr.on('data', (line) => {
+                stderrLines.push(line);
                 if (onProgress) onProgress(line);
             });
 

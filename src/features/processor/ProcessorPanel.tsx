@@ -1,10 +1,12 @@
 import { useProcessorStore } from './useProcessorStore';
 import { useFileBrowserStore } from '../file-browser/useFileBrowserStore';
+import { useSettingsStore } from '../settings/useSettingsStore';
 import { useTranslation } from 'react-i18next';
 
 export function ProcessorPanel() {
   const { queue, isProcessing, addToQueue, startProcessing, clearQueue } = useProcessorStore();
   const { files, selectedFiles } = useFileBrowserStore();
+  const { renameOnly, setRenameOnly } = useSettingsStore();
   const { t } = useTranslation();
 
   const handleAddSelected = () => {
@@ -20,6 +22,36 @@ export function ProcessorPanel() {
   return (
     <div className="flex flex-col h-full bg-gray-900 text-white p-4">
       <h2 className="text-lg font-bold mb-4">{t('processor.title')}</h2>
+
+      <div className="mb-4 space-y-2">
+        <label className="block text-xs font-medium text-gray-500">{t('processor.modeLabel')}</label>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setRenameOnly(false)}
+            disabled={isProcessing}
+            className={`
+              px-2 py-1.5 rounded text-xs border transition-colors
+              ${!renameOnly ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}
+              ${isProcessing ? 'opacity-60 cursor-not-allowed' : ''}
+            `}
+          >
+            {t('processor.modeProcess')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setRenameOnly(true)}
+            disabled={isProcessing}
+            className={`
+              px-2 py-1.5 rounded text-xs border transition-colors
+              ${renameOnly ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}
+              ${isProcessing ? 'opacity-60 cursor-not-allowed' : ''}
+            `}
+          >
+            {t('processor.modeRenameOnly')}
+          </button>
+        </div>
+      </div>
       
       <div className="flex gap-2 mb-4">
         <button 
@@ -37,7 +69,7 @@ export function ProcessorPanel() {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto mb-4 border border-gray-800 rounded bg-gray-950 p-2">
+      <div className="flex-1 overflow-y-auto hover-scroll mb-4 border border-gray-800 rounded bg-gray-950 p-2">
         {queue.length === 0 ? (
           <div className="text-gray-500 text-sm text-center mt-4">{t('processor.queueEmpty')}</div>
         ) : (

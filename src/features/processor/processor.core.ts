@@ -23,6 +23,7 @@ interface ProcessorDependencies {
   basename(path: string): Promise<string>;
   extname(path: string): Promise<string>;
   exists(path: string): Promise<boolean>;
+  copyFile(fromPath: string, toPath: string): Promise<void>;
   mkdir(path: string): Promise<void>;
   createCommandBuilder(): AudioCommandBuilder;
   runFFmpeg(args: string[], onProgress?: (line: string) => void): Promise<void>;
@@ -44,6 +45,11 @@ export async function executeTask(
     const outputPath = await resolveOutputPath(task.file, settings, deps);
     if (!outputPath) {
       return { status: 'completed', progress: 'Skipped (file exists)' };
+    }
+
+    if (settings.renameOnly) {
+      await deps.copyFile(task.file, outputPath);
+      return { status: 'completed' };
     }
 
     const builder = deps.createCommandBuilder();
@@ -94,8 +100,9 @@ async function resolveOutputPath(
 
   const originalName = await deps.basename(inputPath);
   const originalExt = await deps.extname(inputPath);
-  const nameWithoutExt = originalName.slice(0, -originalExt.length);
-  const targetExt = settings.format === 'wav' ? originalExt : `.${settings.format}`;
+  const nameWithoutExt =
+    originalExt.length > 0 ? originalName.slice(0, -originalExt.length) : originalName;
+  const targetExt = settings.renameOnly ? originalExt : `.${settings.format}`;
 
   let counter = 0;
   while (true) {

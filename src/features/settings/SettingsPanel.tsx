@@ -3,20 +3,30 @@ import { Folder, FileAudio, Settings as SettingsIcon, Bell, Moon, Sun, Monitor, 
 import { useTranslation } from 'react-i18next';
 import { SUPPORTED_LANGUAGES, type LanguageCode } from '../../i18n/languages';
 
-export function SettingsPanel() {
+export type SettingsSection = 'output' | 'audio' | 'app';
+
+interface SettingsPanelProps {
+  visibleSections?: SettingsSection[];
+  showSectionHeaders?: boolean;
+}
+
+export function SettingsPanel({ visibleSections, showSectionHeaders = true }: SettingsPanelProps = {}) {
   const settings = useSettingsStore();
   const { t } = useTranslation();
+  const sections = new Set<SettingsSection>(visibleSections ?? ['output', 'audio', 'app']);
 
   return (
     <div className="flex flex-col h-full bg-gray-900 text-gray-300">
-      <div className="p-4 space-y-8 overflow-y-auto flex-1">
+      <div className="p-4 space-y-8 overflow-y-auto hover-scroll flex-1">
         
-        {/* Output Settings */}
+        {sections.has('output') && (
         <section className="space-y-4">
-          <div className="flex items-center gap-2 text-blue-400 border-b border-gray-800 pb-2">
-            <Folder size={16} />
-            <h3 className="font-bold text-xs uppercase tracking-wider">{t('settings.section.output')}</h3>
-          </div>
+          {showSectionHeaders && (
+            <div className="flex items-center gap-2 text-blue-400 border-b border-gray-800 pb-2">
+              <Folder size={16} />
+              <h3 className="font-bold text-xs uppercase tracking-wider">{t('settings.section.output')}</h3>
+            </div>
+          )}
 
           <div className="space-y-3">
             <div>
@@ -79,15 +89,19 @@ export function SettingsPanel() {
                 <option value="skip">{t('settings.skip')}</option>
               </select>
             </div>
+
           </div>
         </section>
+        )}
 
-        {/* Audio Processing */}
+        {sections.has('audio') && (
         <section className="space-y-4">
-          <div className="flex items-center gap-2 text-green-400 border-b border-gray-800 pb-2">
-            <FileAudio size={16} />
-            <h3 className="font-bold text-xs uppercase tracking-wider">{t('settings.section.audio')}</h3>
-          </div>
+          {showSectionHeaders && (
+            <div className="flex items-center gap-2 text-green-400 border-b border-gray-800 pb-2">
+              <FileAudio size={16} />
+              <h3 className="font-bold text-xs uppercase tracking-wider">{t('settings.section.audio')}</h3>
+            </div>
+          )}
 
           <div className="space-y-3">
             <div>
@@ -167,13 +181,16 @@ export function SettingsPanel() {
             </div>
           </div>
         </section>
+        )}
 
-        {/* Application Settings */}
+        {sections.has('app') && (
         <section className="space-y-4">
-          <div className="flex items-center gap-2 text-purple-400 border-b border-gray-800 pb-2">
-            <SettingsIcon size={16} />
-            <h3 className="font-bold text-xs uppercase tracking-wider">{t('settings.section.app')}</h3>
-          </div>
+          {showSectionHeaders && (
+            <div className="flex items-center gap-2 text-purple-400 border-b border-gray-800 pb-2">
+              <SettingsIcon size={16} />
+              <h3 className="font-bold text-xs uppercase tracking-wider">{t('settings.section.app')}</h3>
+            </div>
+          )}
 
           <div className="space-y-3">
             <div>
@@ -246,6 +263,7 @@ export function SettingsPanel() {
             </div>
           </div>
         </section>
+        )}
 
         <div className="pt-4 border-t border-gray-800">
             <button 

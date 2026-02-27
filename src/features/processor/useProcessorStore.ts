@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { FFmpegCommandBuilder, runFFmpeg } from '../../lib/ffmpeg';
 import { basename, dirname, extname, join } from '@tauri-apps/api/path';
-import { exists, mkdir } from '@tauri-apps/plugin-fs';
+import { copyFile, exists, mkdir } from '@tauri-apps/plugin-fs';
 import { useHistoryStore } from '../history/useHistoryStore';
 import { useSettingsStore } from '../settings/useSettingsStore';
 import { executeTask, runWithConcurrency } from './processor.core';
@@ -92,6 +92,7 @@ const processorDependencies = {
   basename,
   extname,
   exists,
+  copyFile,
   mkdir: async (path: string) => {
     try {
       await mkdir(path, { recursive: true });
@@ -112,6 +113,7 @@ function snapshotProcessorSettings(
     filenamePrefix: settings.filenamePrefix,
     filenameSuffix: settings.filenameSuffix,
     overwriteMode: settings.overwriteMode,
+    renameOnly: settings.renameOnly,
     format: settings.format,
     loudness: settings.loudness,
     maxConcurrentJobs: settings.maxConcurrentJobs,
